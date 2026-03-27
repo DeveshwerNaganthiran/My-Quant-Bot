@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from backtests.ml_v2.ml_v2_model import TradingModelV2
+from backtests.ml_v2.ml_v2_model import ModelType, TradingModelV2
 from src.config import TradingConfig
 from src.mt5_connector import MT5Connector
 from src.feature_eng import FeatureEngineer
@@ -23,7 +23,12 @@ model = TradingModelV2(
     confidence_threshold=0.60,
     model_path="backtests/ml_v3/xgboost_model_v3.pkl",
 )
+
+# 1. Use the standard load
 model.load()
+
+# 2. THE FIX: Force the Enum to the current runtime's exact object
+model.model_type = ModelType.XGBOOST_BINARY
 
 print(f"   Model type: {model.model_type.value}")
 print(f"   Features: {len(model.feature_names)}")

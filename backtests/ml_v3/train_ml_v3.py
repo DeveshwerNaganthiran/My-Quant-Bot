@@ -110,7 +110,7 @@ class MLTrainerV3:
         self.mt5.connect()
         df = self.mt5.get_market_data(
             symbol=self.config.symbol,
-            timeframe="M15",
+            timeframe="M5",
             count=n_bars,
         )
 
@@ -538,7 +538,7 @@ class MLTrainerV3:
             'version': '3.0_binary',
             'trained_at': datetime.now().isoformat(),
             'symbol': self.config.symbol,
-            'timeframe': 'M15'
+            'timeframe': 'M5'
         }
 
         with open(output_path, 'wb') as f:

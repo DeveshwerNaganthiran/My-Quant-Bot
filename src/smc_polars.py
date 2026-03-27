@@ -752,6 +752,32 @@ class SMCAnalyzer:
         has_bullish_ob = 1 in recent_obs
         has_bearish_ob = -1 in recent_obs
 
+        # === STRICT CONFLICT RESOLUTION (FRESHEST SIGNAL WINS) ===
+        # 1. Find which structure break happened most recently
+        bull_break_idx = max([i for i, x in enumerate(recent_bos) if x == 1] + [i for i, x in enumerate(recent_choch) if x == 1] + [-1])
+        bear_break_idx = max([i for i, x in enumerate(recent_bos) if x == -1] + [i for i, x in enumerate(recent_choch) if x == -1] + [-1])
+
+        if bull_break_idx > bear_break_idx:
+            has_bearish_break = False  # Ignore older bearish break
+        elif bear_break_idx > bull_break_idx:
+            has_bullish_break = False  # Ignore older bullish break
+
+        # 2. Find which zone (FVG/OB) formed most recently
+        bull_zone_idx = max([i for i, x in enumerate(recent_fvg_bull) if x] + [i for i, x in enumerate(recent_obs) if x == 1] + [-1])
+        bear_zone_idx = max([i for i, x in enumerate(recent_fvg_bear) if x] + [i for i, x in enumerate(recent_obs) if x == -1] + [-1])
+
+        # 3. If the SELL zone is newer, completely kill the BUY setup
+        if bear_zone_idx > bull_zone_idx:
+            has_bullish_fvg = False
+            has_bullish_ob = False
+            market_structure = -1  # Force the bot to evaluate bearish conditions
+            
+        # 4. If the BUY zone is newer, completely kill the SELL setup
+        elif bull_zone_idx > bear_zone_idx:
+            has_bearish_fvg = False
+            has_bearish_ob = False
+            market_structure = 1   # Force the bot to evaluate bullish conditions
+
         # Get valid FVG/OB zone for entry
         def get_valid_bullish_zone():
             # Find most recent bullish FVG or OB

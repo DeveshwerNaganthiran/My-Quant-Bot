@@ -1,85 +1,85 @@
-2026-03-27 10:00:12 | INFO     | ============================================================
-2026-03-27 10:00:12 | INFO     | SMART TRADING BOT - MODEL TRAINING
-2026-03-27 10:00:12 | INFO     | ============================================================
-2026-03-27 10:00:12 | INFO     | Symbol: XAUUSD
-2026-03-27 10:00:12 | INFO     | Capital: $5,000.00
-2026-03-27 10:00:12 | INFO     | Mode: small
-2026-03-27 10:00:12 | INFO     | Connecting to MT5...
-2026-03-27 10:00:15 | INFO     | Connected to MT5: MetaQuotes-Demo (Account: 10010248609)
-2026-03-27 10:00:15 | INFO     | MT5 connected successfully!
-2026-03-27 10:00:15 | INFO     | Account Balance: $99,585.73
-2026-03-27 10:00:15 | INFO     | Account Equity: $99,585.73
-2026-03-27 10:00:15 | INFO     | Fetching 15000 bars of XAUUSD M15 data...
-2026-03-27 10:00:16 | DEBUG    | Fetched 15000 bars for XAUUSD M15
-2026-03-27 10:00:16 | INFO     | Received 15000 bars
-2026-03-27 10:00:16 | INFO     | Date range: 2025-08-07 02:00:00 to 2026-03-27 04:00:00
-2026-03-27 10:00:16 | INFO     | Applying feature engineering...
-2026-03-27 10:00:16 | DEBUG    | RSI calculated (period=14)
-2026-03-27 10:00:16 | DEBUG    | ATR calculated (period=14)
-2026-03-27 10:00:16 | DEBUG    | MACD calculated (12/26/9)
-2026-03-27 10:00:16 | DEBUG    | Bollinger Bands calculated (period=20, std=2.0)
-2026-03-27 10:00:16 | DEBUG    | EMA crossover calculated (9/21)
-2026-03-27 10:00:16 | DEBUG    | Volume features calculated (period=20, includes OFI & toxicity)
-2026-03-27 10:00:16 | DEBUG    | ML features calculated
-2026-03-27 10:00:16 | DEBUG    | Swing points: 927 highs, 951 lows
-2026-03-27 10:00:16 | DEBUG    | FVG calculation complete. Bullish: 1807, Bearish: 1394
-2026-03-27 10:00:16 | DEBUG    | Order Blocks: 653 bullish, 657 bearish
-2026-03-27 10:00:16 | DEBUG    | BOS: 209 bullish, 146 bearish
-2026-03-27 10:00:16 | DEBUG    | CHoCH: 178 bullish, 177 bearish
-2026-03-27 10:00:16 | DEBUG    | Target created (lookahead=1, threshold=0.0)
-2026-03-27 10:00:16 | INFO     | Total features created: 77
-2026-03-27 10:00:16 | INFO     | Training data saved to data/training_data.parquet
-2026-03-27 10:00:16 | INFO     | ============================================================
-2026-03-27 10:00:16 | INFO     | Training HMM Regime Model
-2026-03-27 10:00:16 | INFO     | ============================================================
-2026-03-27 10:00:16 | INFO     | Features scaled: 14888 samples, 8 features
-2026-03-27 10:00:19 | DEBUG    |   HMM seed 42: score=-98273.0, effective=-98676.7, fracs=[43.2%, 12.9%, 43.9%], phantom=False, diag_min=0.943, diag_mean=0.963
-2026-03-27 10:00:21 | DEBUG    |   HMM seed 59: score=-98273.0, effective=-98676.7, fracs=[12.9%, 43.2%, 43.9%], phantom=False, diag_min=0.943, diag_mean=0.963
-2026-03-27 10:00:22 | DEBUG    |   HMM seed 76: score=-98273.0, effective=-98676.7, fracs=[12.9%, 43.2%, 43.9%], phantom=False, diag_min=0.943, diag_mean=0.963
-2026-03-27 10:00:24 | DEBUG    |   HMM seed 93: score=-98273.0, effective=-98676.7, fracs=[43.9%, 43.2%, 12.9%], phantom=False, diag_min=0.943, diag_mean=0.963
-2026-03-27 10:00:26 | DEBUG    |   HMM seed 110: score=-98273.0, effective=-98676.7, fracs=[43.2%, 43.9%, 12.9%], phantom=False, diag_min=0.943, diag_mean=0.963
-2026-03-27 10:00:26 | INFO     | HMM v3 fitted: 14888 samples, score=-98273.0, seed=42
-2026-03-27 10:00:26 | INFO     |   State distribution: {'medium_volatility': '43.2%', 'high_volatility': '12.9%', 'low_volatility': '43.9%'}
-2026-03-27 10:00:26 | INFO     |   Transmat diag: min=0.943, mean=0.963
-2026-03-27 10:00:26 | INFO     |   Stability: avg_duration=45.8 bars, transitions=324/14888 (21.8/1000)
-2026-03-27 10:00:26 | INFO     |   Smoothing: enabled=True, min_duration=5
-2026-03-27 10:00:26 | INFO     |   low_volatility: [0.015, 0.006, 0.979]
-2026-03-27 10:00:26 | INFO     |   medium_volatility: [0.968, 0.011, 0.021]
-2026-03-27 10:00:26 | INFO     |   high_volatility: [0.056, 0.943, 0.001]
-2026-03-27 10:00:26 | INFO     | HMM model v3 saved to models\hmm_regime.pkl
-2026-03-27 10:00:26 | INFO     | Regime Distribution:
-2026-03-27 10:00:26 | INFO     |   low_volatility: 6590 bars
-2026-03-27 10:00:26 | INFO     |   medium_volatility: 6470 bars
-2026-03-27 10:00:26 | INFO     |   high_volatility: 1828 bars
-2026-03-27 10:00:26 | INFO     | Transition Matrix:
-2026-03-27 10:00:26 | INFO     |   low_volatility: ['0.01', '0.01', '0.98']
-2026-03-27 10:00:26 | INFO     |   medium_volatility: ['0.97', '0.01', '0.02']
-2026-03-27 10:00:26 | INFO     |   high_volatility: ['0.06', '0.94', '0.00']
-2026-03-27 10:00:26 | INFO     | ============================================================
-2026-03-27 10:00:26 | INFO     | Training XGBoost Model (Anti-Overfit Config)
-2026-03-27 10:00:26 | INFO     | ============================================================
-2026-03-27 10:00:26 | INFO     | Available features: 37/37
-2026-03-27 10:00:26 | INFO     | Train/Test gap: 50 bars to prevent temporal leakage
-2026-03-27 10:00:26 | INFO     | Training with 11165 samples, testing with 3672 samples
-2026-03-27 10:00:26 | INFO     | Training complete: Train AUC=0.6706, Test AUC=0.6109
-2026-03-27 10:00:26 | INFO     | Model saved to models\xgboost_model.pkl
-2026-03-27 10:00:26 | INFO     | Top 10 Feature Importance:
-2026-03-27 10:00:26 | INFO     |   ob: 173.8835
-2026-03-27 10:00:26 | INFO     |   macd: 12.8814
-2026-03-27 10:00:26 | INFO     |   returns_1: 12.5592
-2026-03-27 10:00:26 | INFO     |   rsi: 12.3532
-2026-03-27 10:00:26 | INFO     |   price_position: 11.2154
-2026-03-27 10:00:26 | INFO     |   dist_from_sma_20: 10.5301
-2026-03-27 10:00:26 | INFO     |   log_returns: 10.3782
-2026-03-27 10:00:26 | INFO     |   ema_9: 9.7075
-2026-03-27 10:00:26 | INFO     |   bb_width: 8.7855
-2026-03-27 10:00:26 | INFO     |   returns_20: 8.7448
-2026-03-27 10:00:26 | INFO     | ============================================================
-2026-03-27 10:00:26 | INFO     | TRAINING COMPLETE
-2026-03-27 10:00:26 | INFO     | ============================================================
-2026-03-27 10:00:26 | INFO     | HMM Model: SAVED
-2026-03-27 10:00:26 | INFO     | XGBoost Model: SAVED
-2026-03-27 10:00:26 | INFO     | Models saved in: models/
-2026-03-27 10:00:26 | INFO     | Training data saved in: data/
-2026-03-27 10:00:26 | INFO     | Disconnected from MT5
-2026-03-27 10:00:26 | INFO     | MT5 disconnected
+2026-03-27 15:29:39 | INFO     | ============================================================
+2026-03-27 15:29:39 | INFO     | SMART TRADING BOT - MODEL TRAINING
+2026-03-27 15:29:39 | INFO     | ============================================================
+2026-03-27 15:29:39 | INFO     | Symbol: XAUUSD
+2026-03-27 15:29:39 | INFO     | Capital: $5,000.00
+2026-03-27 15:29:39 | INFO     | Mode: small
+2026-03-27 15:29:39 | INFO     | Connecting to MT5...
+2026-03-27 15:29:41 | INFO     | Connected to MT5: MetaQuotes-Demo (Account: 10010248609)
+2026-03-27 15:29:42 | INFO     | MT5 connected successfully!
+2026-03-27 15:29:42 | INFO     | Account Balance: $99,584.48
+2026-03-27 15:29:42 | INFO     | Account Equity: $99,586.34
+2026-03-27 15:29:42 | INFO     | Fetching 15000 bars of XAUUSD M1 data...
+2026-03-27 15:29:42 | DEBUG    | Fetched 15000 bars for XAUUSD M1
+2026-03-27 15:29:42 | INFO     | Received 15000 bars
+2026-03-27 15:29:42 | INFO     | Date range: 2026-03-12 12:30:00 to 2026-03-27 09:29:00
+2026-03-27 15:29:42 | INFO     | Applying feature engineering...
+2026-03-27 15:29:42 | DEBUG    | RSI calculated (period=14)
+2026-03-27 15:29:42 | DEBUG    | ATR calculated (period=14)
+2026-03-27 15:29:42 | DEBUG    | MACD calculated (12/26/9)
+2026-03-27 15:29:42 | DEBUG    | Bollinger Bands calculated (period=20, std=2.0)
+2026-03-27 15:29:42 | DEBUG    | EMA crossover calculated (9/21)
+2026-03-27 15:29:42 | DEBUG    | Volume features calculated (period=20, includes OFI & toxicity)
+2026-03-27 15:29:42 | DEBUG    | ML features calculated
+2026-03-27 15:29:42 | DEBUG    | Swing points: 931 highs, 899 lows
+2026-03-27 15:29:42 | DEBUG    | FVG calculation complete. Bullish: 1962, Bearish: 1963
+2026-03-27 15:29:42 | DEBUG    | Order Blocks: 654 bullish, 702 bearish
+2026-03-27 15:29:42 | DEBUG    | BOS: 155 bullish, 187 bearish
+2026-03-27 15:29:42 | DEBUG    | CHoCH: 184 bullish, 184 bearish
+2026-03-27 15:29:42 | DEBUG    | Target created (lookahead=1, threshold=0.0)
+2026-03-27 15:29:42 | INFO     | Total features created: 77
+2026-03-27 15:29:42 | INFO     | Training data saved to data/training_data.parquet
+2026-03-27 15:29:42 | INFO     | ============================================================
+2026-03-27 15:29:42 | INFO     | Training HMM Regime Model
+2026-03-27 15:29:42 | INFO     | ============================================================
+2026-03-27 15:29:42 | INFO     | Features scaled: 14888 samples, 8 features
+2026-03-27 15:29:47 | DEBUG    |   HMM seed 42: score=-110062.2, effective=-109964.4, fracs=[15.4%, 42.9%, 41.7%], phantom=False, diag_min=0.964, diag_mean=0.979
+2026-03-27 15:29:49 | DEBUG    |   HMM seed 59: score=-110062.2, effective=-109964.4, fracs=[15.4%, 42.9%, 41.7%], phantom=False, diag_min=0.964, diag_mean=0.979
+2026-03-27 15:29:51 | DEBUG    |   HMM seed 76: score=-110062.2, effective=-109964.4, fracs=[15.4%, 41.7%, 42.9%], phantom=False, diag_min=0.964, diag_mean=0.979
+2026-03-27 15:29:52 | DEBUG    |   HMM seed 93: score=-110062.2, effective=-109964.4, fracs=[15.4%, 41.7%, 42.9%], phantom=False, diag_min=0.964, diag_mean=0.979
+2026-03-27 15:29:54 | DEBUG    |   HMM seed 110: score=-110062.2, effective=-109964.4, fracs=[41.7%, 15.4%, 42.9%], phantom=False, diag_min=0.964, diag_mean=0.979
+2026-03-27 15:29:54 | INFO     | HMM v3 fitted: 14888 samples, score=-110062.2, seed=93
+2026-03-27 15:29:54 | INFO     |   State distribution: {'high_volatility': '15.4%', 'low_volatility': '41.7%', 'medium_volatility': '42.9%'}
+2026-03-27 15:29:54 | INFO     |   Transmat diag: min=0.964, mean=0.979
+2026-03-27 15:29:54 | INFO     |   Stability: avg_duration=75.6 bars, transitions=196/14888 (13.2/1000)
+2026-03-27 15:29:54 | INFO     |   Smoothing: enabled=True, min_duration=5
+2026-03-27 15:29:54 | INFO     |   low_volatility: [0.002, 0.992, 0.007]
+2026-03-27 15:29:54 | INFO     |   medium_volatility: [0.012, 0.008, 0.980]
+2026-03-27 15:29:54 | INFO     |   high_volatility: [0.964, 0.000, 0.036]
+2026-03-27 15:29:54 | INFO     | HMM model v3 saved to models\hmm_regime.pkl
+2026-03-27 15:29:54 | INFO     | Regime Distribution:
+2026-03-27 15:29:54 | INFO     |   low_volatility: 6225 bars
+2026-03-27 15:29:54 | INFO     |   high_volatility: 2227 bars
+2026-03-27 15:29:54 | INFO     |   medium_volatility: 6436 bars
+2026-03-27 15:29:54 | INFO     | Transition Matrix:
+2026-03-27 15:29:54 | INFO     |   low_volatility: ['0.00', '0.99', '0.01']
+2026-03-27 15:29:54 | INFO     |   medium_volatility: ['0.01', '0.01', '0.98']
+2026-03-27 15:29:54 | INFO     |   high_volatility: ['0.96', '0.00', '0.04']
+2026-03-27 15:29:54 | INFO     | ============================================================
+2026-03-27 15:29:54 | INFO     | Training XGBoost Model (Anti-Overfit Config)
+2026-03-27 15:29:54 | INFO     | ============================================================
+2026-03-27 15:29:54 | INFO     | Available features: 37/37
+2026-03-27 15:29:54 | INFO     | Train/Test gap: 50 bars to prevent temporal leakage
+2026-03-27 15:29:54 | INFO     | Training with 11165 samples, testing with 3672 samples
+2026-03-27 15:29:54 | INFO     | Training complete: Train AUC=0.6655, Test AUC=0.6216
+2026-03-27 15:29:54 | INFO     | Model saved to models\xgboost_model.pkl
+2026-03-27 15:29:54 | INFO     | Top 10 Feature Importance:
+2026-03-27 15:29:54 | INFO     |   ob: 210.5627
+2026-03-27 15:29:54 | INFO     |   log_returns: 32.6583
+2026-03-27 15:29:54 | INFO     |   returns_1: 27.6499
+2026-03-27 15:29:54 | INFO     |   atr_percent: 14.6582
+2026-03-27 15:29:54 | INFO     |   bb_percent_b: 10.3255
+2026-03-27 15:29:54 | INFO     |   ll_count_5: 9.0814
+2026-03-27 15:29:54 | INFO     |   hh_count_5: 8.8461
+2026-03-27 15:29:54 | INFO     |   macd_histogram: 8.0269
+2026-03-27 15:29:54 | INFO     |   returns_20: 7.8514
+2026-03-27 15:29:54 | INFO     |   rsi: 7.7249
+2026-03-27 15:29:54 | INFO     | ============================================================
+2026-03-27 15:29:54 | INFO     | TRAINING COMPLETE
+2026-03-27 15:29:54 | INFO     | ============================================================
+2026-03-27 15:29:54 | INFO     | HMM Model: SAVED
+2026-03-27 15:29:54 | INFO     | XGBoost Model: SAVED
+2026-03-27 15:29:54 | INFO     | Models saved in: models/
+2026-03-27 15:29:54 | INFO     | Training data saved in: data/
+2026-03-27 15:29:54 | INFO     | Disconnected from MT5
+2026-03-27 15:29:54 | INFO     | MT5 disconnected

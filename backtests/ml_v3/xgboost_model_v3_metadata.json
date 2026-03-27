@@ -1,9 +1,9 @@
 {
-  "train_accuracy": 0.5739171637215006,
-  "test_accuracy": 0.5630815407703852,
-  "train_samples": 35878,
-  "test_samples": 9995,
-  "n_features": 81,
+  "train_accuracy": 0.7801445211389129,
+  "test_accuracy": 0.5350140056022409,
+  "train_samples": 37088,
+  "test_samples": 9996,
+  "n_features": 89,
   "feature_cols": [
     "spread",
     "rsi",
@@ -25,6 +25,14 @@
     "volume_ratio",
     "volume_increasing",
     "high_volume",
+    "buy_volume",
+    "sell_volume",
+    "ofi_pseudo",
+    "ofi_trend",
+    "ofi_std",
+    "ofi_divergence",
+    "volume_momentum",
+    "toxicity",
     "returns_1",
     "returns_5",
     "returns_20",
@@ -88,19 +96,19 @@
     "gap_from_prev_close"
   ],
   "hyperparameters": {
-    "max_depth": 3,
-    "learning_rate": 0.02372312562116949,
-    "n_estimators": 100,
-    "min_child_weight": 1,
-    "gamma": 0.10654204697811255,
-    "subsample": 0.9364174432522089,
-    "colsample_bytree": 0.7031796673225155,
-    "reg_alpha": 0.7974351847252932,
-    "reg_lambda": 1.9804942417034694
+    "max_depth": 6,
+    "learning_rate": 0.05,
+    "n_estimators": 300,
+    "min_child_weight": 3,
+    "gamma": 0.1,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "reg_alpha": 0.1,
+    "reg_lambda": 1.0
   },
   "class_distribution_train": {
-    "SELL": 17939,
-    "BUY": 17939
+    "SELL": 18544,
+    "BUY": 18544
   },
   "model_type": "binary_classification"
 }

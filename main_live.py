@@ -135,7 +135,7 @@ class TradingBot:
         # Initialize ML Model (unified path — auto-trainer saves here after retrain)
         self.ml_model = TradingModelV2(
             confidence_threshold=0.60,  # Binary confidence threshold (adjustable 0.55-0.65)
-            model_path="models/xgboost_model.pkl",
+            model_path="backtests/ml_v3/xgboost_model_v3.pkl",
         )
         self.fe_v2 = MLV2FeatureEngineer()
         self._h1_df_cached = None  # Cache H1 DataFrame with indicators for V2 features
@@ -155,7 +155,7 @@ class TradingBot:
             # Smart Market Close Handler
             enable_market_close_handler=True,
             min_profit_before_close=3.0,   # v4: from $2
-            max_loss_to_hold=10.0,     # v4: Max loss $10 per position (from $5)
+            max_loss_to_hold=2.0,     # v4: Max loss $10 per position (from $5)
         )
 
         # Initialize Session Filter (WIB timezone for Batam)
@@ -198,7 +198,7 @@ class TradingBot:
         self._execution_times: list = []
         self._current_date = date.today()
         self._models_loaded = False
-        self._trade_cooldown_seconds = 150  # OPTIMIZED: 2.5 min (~10 bars on M15) - was 300
+        self._trade_cooldown_seconds = 60  # OPTIMIZED: 2.5 min (~10 bars on M15) - was 300
         self._start_time = datetime.now()
         self._daily_start_balance: float = 0
         self._total_session_profit: float = 0
@@ -326,6 +326,11 @@ class TradingBot:
         # Load ML V2 Model D
         try:
             self.ml_model.load()
+            
+            # THE FIX: Override the Enum to match the current runtime object
+            from backtests.ml_v2.ml_v2_model import ModelType
+            self.ml_model.model_type = ModelType.XGBOOST_BINARY
+            
             if self.ml_model.fitted:
                 logger.info("ML V2 Model D loaded successfully")
                 logger.info(f"  Features: {len(self.ml_model.feature_names)}")
@@ -347,7 +352,7 @@ class TradingBot:
 
     def _dash_log(self, level: str, message: str):
         """Add log entry to dashboard buffer."""
-        now = datetime.now(ZoneInfo("Asia/Jakarta"))
+        now = datetime.now(ZoneInfo("Asia/Kuala_Lumpur"))
         self._dash_logs.append({
             "time": now.strftime("%H:%M:%S"),
             "level": level,
@@ -363,7 +368,7 @@ class TradingBot:
                 "trainAuc": 0,
                 "testAuc": 0,
                 "sampleCount": 0,
-                "updatedAt": datetime.now(ZoneInfo("Asia/Jakarta")).isoformat(),
+                "updatedAt": datetime.now(ZoneInfo("Asia/Kuala_Lumpur")).isoformat(),
             }
 
             # Extract feature importance from XGBoost model (V2: xgb_model, V1: model)
@@ -431,7 +436,7 @@ class TradingBot:
     def _write_dashboard_status(self):
         """Write current bot state to JSON file for Docker dashboard API."""
         try:
-            wib = ZoneInfo("Asia/Jakarta")
+            wib = ZoneInfo("Asia/Kuala_Lumpur")
             now = datetime.now(wib)
 
             # Gather price data
@@ -673,7 +678,7 @@ class TradingBot:
     def _get_time_filter_status(self) -> dict:
         """Get time filter (#34A) status for dashboard."""
         try:
-            wib_hour = datetime.now(ZoneInfo("Asia/Jakarta")).hour
+            wib_hour = datetime.now(ZoneInfo("Asia/Kuala_Lumpur")).hour
             blocked_hours = []  # All hours enabled
             return {
                 "wibHour": wib_hour,
@@ -688,7 +693,7 @@ class TradingBot:
         details = []
         try:
             for ticket, guard in self.smart_risk._position_guards.items():
-                trade_hours = (datetime.now(ZoneInfo("Asia/Jakarta")) - guard.entry_time).total_seconds() / 3600
+                trade_hours = (datetime.now(ZoneInfo("Asia/Kuala_Lumpur")) - guard.entry_time).total_seconds() / 3600
                 drawdown_pct = 0.0
                 if guard.peak_profit > 0:
                     drawdown_pct = ((guard.peak_profit - guard.current_profit) / guard.peak_profit) * 100
@@ -712,7 +717,7 @@ class TradingBot:
         try:
             hours_since = 0.0
             if self.auto_trainer._last_retrain_time:
-                hours_since = (datetime.now(ZoneInfo("Asia/Jakarta")) - self.auto_trainer._last_retrain_time).total_seconds() / 3600
+                hours_since = (datetime.now(ZoneInfo("Asia/Kuala_Lumpur")) - self.auto_trainer._last_retrain_time).total_seconds() / 3600
 
             # Get AUC: prefer auto_trainer's cached value, fallback to model's stored metrics
             current_auc = self.auto_trainer._current_auc
@@ -761,7 +766,7 @@ class TradingBot:
     def _get_market_close_status(self) -> dict:
         """Get market close timing info for dashboard."""
         try:
-            now = datetime.now(ZoneInfo("Asia/Jakarta"))
+            now = datetime.now(ZoneInfo("Asia/Kuala_Lumpur"))
             # Daily close: ~05:00 WIB (rollover)
             daily_close_hour = 5
             if now.hour >= daily_close_hour:
@@ -1482,7 +1487,7 @@ class TradingBot:
             self._last_regime = regime_state.regime
             self._last_regime_volatility = regime_state.volatility
             self._last_regime_confidence = regime_state.confidence
-            self._last_regime_updated = datetime.now(ZoneInfo("Asia/Jakarta")).strftime("%H:%M:%S")
+            self._last_regime_updated = datetime.now(ZoneInfo("Asia/Kuala_Lumpur")).strftime("%H:%M:%S")
             
         except Exception as e:
             logger.warning(f"Regime detection error: {e}")
@@ -1531,7 +1536,7 @@ class TradingBot:
         self._last_ml_signal = ml_prediction.signal
         self._last_ml_confidence = ml_prediction.confidence
         self._last_ml_probability = ml_prediction.probability
-        self._last_ml_updated = datetime.now(ZoneInfo("Asia/Jakarta")).strftime("%H:%M:%S")
+        self._last_ml_updated = datetime.now(ZoneInfo("Asia/Kuala_Lumpur")).strftime("%H:%M:%S")
 
         # Cache ML prediction and DataFrame for inter-candle position checks (Fix 4)
         self._cached_ml_prediction = ml_prediction
@@ -1539,7 +1544,7 @@ class TradingBot:
 
         # Cache SMC signal for dashboard (runs before filters so dashboard always updates)
         smc_signal = self.smc.generate_signal(df)
-        _wib_now = datetime.now(ZoneInfo("Asia/Jakarta")).strftime("%H:%M:%S")
+        _wib_now = datetime.now(ZoneInfo("Asia/Kuala_Lumpur")).strftime("%H:%M:%S")
         if smc_signal:
             self._last_raw_smc_signal = smc_signal.signal_type
             self._last_raw_smc_confidence = smc_signal.confidence
@@ -1671,7 +1676,7 @@ class TradingBot:
 
         # 10.1 H1 Bias — PENDUKUNG SAJA (v0.2.5d: tidak memblokir, hanya penalti confidence)
         # SMC is MASTER. H1 aligned = boost 5%, H1 opposed = penalti 10%
-        h1_enabled = self._is_filter_enabled("h1_bias")
+        h1_enabled = False  # Completely disabled H1 bias to favor M5/M15/M30
         h1_passed = True  # Always pass — never block
         h1_detail = f"H1={h1_bias}"
         h1_penalty = 1.0
@@ -1691,9 +1696,9 @@ class TradingBot:
                 h1_detail = f"Aligned {h1_bias} (+5%)"
                 logger.info(f"H1 Filter: {final_signal.signal_type} aligned with H1={h1_bias} (+5% boost)")
             elif h1_opposed:
-                h1_penalty = 0.90  # 10% confidence penalty (NOT block)
-                h1_detail = f"Opposed {h1_bias} (-10%)"
-                logger.info(f"H1 Filter: {final_signal.signal_type} opposed H1={h1_bias} (-10% penalty, NOT blocked)")
+                # BLOCK the trade if the higher timeframe is moving the opposite way
+                logger.info(f"H1 Filter: {final_signal.signal_type} BLOCKED because H1={h1_bias}")
+                return None
             else:
                 logger.debug(f"H1 Filter: NEUTRAL — no adjustment")
 
@@ -1705,7 +1710,7 @@ class TradingBot:
         # 10.2 Time-of-Hour Filter (#34A: skip WIB hours 9 and 21 — backtest +$356)
         # Hour 9 WIB (02:00 UTC) = end of NY session, low liquidity
         # Hour 21 WIB (14:00 UTC) = London-NY transition, whipsaw prone
-        wib_hour = datetime.now(ZoneInfo("Asia/Jakarta")).hour
+        wib_hour = datetime.now(ZoneInfo("Asia/Kuala_Lumpur")).hour
         time_blocked = False  # All hours enabled — risk managed by ATR scaling + lot multiplier
         time_enabled = self._is_filter_enabled("time_filter")
         time_filter_blocked = time_blocked and time_enabled
@@ -1765,8 +1770,34 @@ class TradingBot:
             logger.info(f"Trade cooldown: {cooldown_remaining:.0f}s remaining")
             return
 
-        # 10.6 PULLBACK FILTER - DISABLED (SMC-only mode)
-        # SMC structure already validates entry zones
+        # 10.6 PULLBACK FILTER - STRICT MODE ENABLED
+        can_trade_pullback, pb_reason = self._check_pullback_filter(df, final_signal.signal_type, current_price)
+        self._last_filter_results.append({
+            "name": "Pullback Filter", 
+            "passed": can_trade_pullback, 
+            "detail": pb_reason
+        })
+        if not can_trade_pullback:
+            logger.info(f"Trade blocked by Pullback Filter: {pb_reason}")
+            return
+        
+        # 10.7 MULTI-TIMEFRAME CONFLUENCE (M5, M15, M30)
+        mtf_passed, mtf_detail = await self._check_mtf_confluence(final_signal.signal_type)
+        
+        # 🤖 LET THE AI COOK: Bypass the MTF filter entirely if the AI is forcing the trade
+        if "AI OVERRIDE" in final_signal.reason:
+            mtf_passed = True
+            mtf_detail = "Bypassed MTF Filter (AI Genius Override in control)"
+
+        self._last_filter_results.append({
+            "name": "MTF Confluence (M5/15/30)", 
+            "passed": mtf_passed, 
+            "detail": mtf_detail
+        })
+        
+        if not mtf_passed:
+            logger.info(f"Trade blocked by MTF Filter: {mtf_detail}")
+            return
 
         # 11. SMART RISK CHECK - Ultra safe mode
         self.smart_risk.check_new_day()
@@ -1798,7 +1829,7 @@ class TradingBot:
         # v6.1: NIGHT SAFETY - Lot reduction for late night hours (22:00-05:59 WIB)
         # Night trading has lower win rate (14%) and higher loss risk
         # Reduce lot by 50% to minimize damage from night volatility
-        wib_hour = datetime.now(ZoneInfo("Asia/Jakarta")).hour
+        wib_hour = datetime.now(ZoneInfo("Asia/Kuala_Lumpur")).hour
         is_night_hours = wib_hour >= 22 or wib_hour <= 5
         if is_night_hours:
             original_lot = safe_lot
@@ -1883,17 +1914,13 @@ class TradingBot:
         if self._loop_count % 60 == 0:
             logger.info(f"Dynamic: {market_analysis.quality.value} (score={market_analysis.score}) -> threshold={dynamic_threshold:.0%}")
 
-        # ============================================================
-        # IMPROVED SIGNAL LOGIC v2 (ML+SMC Required for Golden Time)
-        # ============================================================
-        # Golden Time (19:00-23:00 WIB): Require ML+SMC alignment
-        # Other Sessions: SMC-only with ML weak filter
-
         # Check if in golden time (London-NY Overlap, 19:00-23:00 WIB)
         from datetime import datetime
         from zoneinfo import ZoneInfo
-        current_hour = datetime.now(ZoneInfo("Asia/Jakarta")).hour
-        is_golden_time = 19 <= current_hour <= 23  # Fixed detection
+        from src.regime_detector import MarketRegime
+        
+        current_hour = datetime.now(ZoneInfo("Asia/Kuala_Lumpur")).hour
+        is_golden_time = 19 <= current_hour <= 23 
 
         # 1. JANGAN trade jika market quality AVOID atau CRISIS
         if market_analysis.quality.value == "avoid":
@@ -1906,17 +1933,10 @@ class TradingBot:
                 logger.info(f"Skip: CRISIS regime - tidak entry")
             return None
 
-        # ============================================================
-        # v0.2.2 FIX #3: FALSE BREAKOUT FILTER (Professor AI)
-        # ============================================================
-        # London session + low ATR = potential whipsaw → REDUCE confidence (not block)
-        session_info = self.session_filter.get_status_report()
-        session_name = session_info.get("current_session", "Unknown")
+        # FALSE BREAKOUT FILTER: London session + low ATR = potential whipsaw
         is_london = session_name == "London"
-
-        # Calculate ATR ratio from cached df
         atr_ratio = 1.0
-        london_penalty = 1.0  # Confidence multiplier for London low-volatility
+        london_penalty = 1.0  
         cached_df = getattr(self, '_cached_df', None)
         if cached_df is not None and "atr" in cached_df.columns:
             atr_series = cached_df["atr"].drop_nulls()
@@ -1926,9 +1946,7 @@ class TradingBot:
                     baseline_atr = atr_series.tail(96).mean()
                     atr_ratio = current_atr / baseline_atr if baseline_atr > 0 else 1.0
 
-        # MODIFIED: Don't block, just reduce confidence
         if is_london and atr_ratio < 1.2:
-            # London + low volatility = whipsaw risk → reduce confidence by 10%
             london_penalty = 0.90
             if self._loop_count % 120 == 0:
                 logger.info(
@@ -1937,13 +1955,46 @@ class TradingBot:
                 )
 
         # ============================================================
-        # SIGNAL LOGIC v6 - SMC-ONLY (TRUE SMC MASTER)
+        # 1. AI GENIUS OVERRIDE (ML >= 70% ignores SMC completely)
         # ============================================================
-        # Philosophy: SMC is MASTER, ML + H1 = PENDUKUNG only
-        # - SMC signal exists (>= 55% conf) -> EXECUTE
-        # - ML agrees -> Boost confidence (average)
-        # - ML disagrees -> Use SMC confidence (ML IGNORED)
-        # - H1 aligned -> +5% boost, H1 opposed -> -10% penalty (NEVER block)
+        # Only override if SMC is missing, OR if SMC disagrees with the AI
+        needs_override = smc_signal is None or smc_signal.signal_type != ml_prediction.signal
+
+        if ml_prediction.signal in ["BUY", "SELL"] and ml_prediction.confidence >= 0.70 and needs_override:
+            direction = ml_prediction.signal
+            
+            # Create a dynamic ATR-based Stop Loss & Take Profit since we are ignoring SMC
+            atr = 15.0 # Fallback 15 pips if ATR is missing
+            if cached_df is not None and "atr" in cached_df.columns:
+                val = cached_df["atr"].drop_nulls().tail(1).item()
+                if val and val > 0:
+                    atr = val
+            
+            # Make sure we have a valid tick to build the entry price
+            if tick:
+                entry_price = tick.ask if direction == "BUY" else tick.bid
+                
+                sl_dist = atr * 2.0 # 2 ATR stop loss
+                tp_dist = atr * 3.0 # 3 ATR take profit
+                
+                if direction == "BUY":
+                    sl, tp = entry_price - sl_dist, entry_price + tp_dist
+                else:
+                    sl, tp = entry_price + sl_dist, entry_price - tp_dist
+                    
+                logger.info(f"🤖 AI GENIUS OVERRIDE: Forcing {direction} trade! (ML Confidence: {ml_prediction.confidence:.0%})")
+                
+                return SMCSignal(
+                    signal_type=direction,
+                    entry_price=entry_price,
+                    stop_loss=sl,
+                    take_profit=tp,
+                    confidence=ml_prediction.confidence,
+                    reason=f"AI OVERRIDE: ML highly confident ({ml_prediction.confidence:.0%})",
+                )
+
+        # ============================================================
+        # 2. STANDARD SMC LOGIC (If AI is < 70% confident)
         # ============================================================
         golden_marker = "[GOLDEN] " if is_golden_time else ""
         if smc_signal is not None:
@@ -1955,34 +2006,31 @@ class TradingBot:
                     logger.info(f"[SMC LOW] {smc_signal.signal_type} confidence {smc_conf:.0%} < 55% -> Skip")
                 return None
 
-            # Check ML agreement
+            # Check ML agreement based on raw probability
+            ml_leans_bullish = ml_prediction.probability >= 0.50
+            ml_leans_bearish = ml_prediction.probability < 0.50
+
             ml_agrees = (
-                (smc_signal.signal_type == "BUY" and ml_prediction.signal == "BUY") or
-                (smc_signal.signal_type == "SELL" and ml_prediction.signal == "SELL")
+                (smc_signal.signal_type == "BUY" and ml_leans_bullish) or
+                (smc_signal.signal_type == "SELL" and ml_leans_bearish)
             )
 
-            # ============================================================
-            # SELL FILTER REMOVED (v0.2.5d: H1 = pendukung, bukan blocker)
-            # ============================================================
-            # SMC is MASTER — H1 bias hanya penalti confidence, TIDAK memblokir
-            # Penalti diterapkan di bawah bersama H1 bias filter
-
-            # ============================================================
-            # CALCULATE FINAL CONFIDENCE (SMC-ONLY MODE)
-            # ============================================================
             if ml_agrees:
-                # ML boosts confidence (average SMC + ML)
+                # AI agrees! Boost confidence.
                 combined_confidence = (smc_conf + ml_prediction.confidence) / 2
-                reason_suffix = f" | ML BOOST: {ml_prediction.signal} ({ml_prediction.confidence:.0%})"
+                reason_suffix = f" | ML AGREES ({ml_prediction.probability:.0%})"
             else:
-                # ML ignored, use SMC confidence as-is
-                combined_confidence = smc_conf
-                reason_suffix = f" | ML: {ml_prediction.signal} ({ml_prediction.confidence:.0%})"
+                # OVERRIDE: If AI is confused but SMC is >= 80% strong, force the trade!
+                if smc_conf >= 0.80:
+                    combined_confidence = smc_conf * 0.90  # 10% penalty
+                    reason_suffix = f" | ML OVERRIDDEN (SMC was {smc_conf:.0%} strong)"
+                    logger.info(f"AI Override: AI is unsure ({ml_prediction.probability:.0%}) but SMC is {smc_conf:.0%} strong. Forcing trade.")
+                else:
+                    logger.info(f"Signal Blocked: SMC says {smc_signal.signal_type} ({smc_conf:.0%}) but ML disagrees ({ml_prediction.probability:.0%})")
+                    return None
 
-            # Apply London penalty if applicable
+            # Apply penalties
             combined_confidence *= london_penalty
-
-            # Apply regime adjustment for high volatility
             if regime_state and regime_state.regime == MarketRegime.HIGH_VOLATILITY:
                 combined_confidence *= 0.9
 
@@ -2800,6 +2848,34 @@ class TradingBot:
             logger.debug(traceback.format_exc())
 
 
+    async def _check_mtf_confluence(self, signal_direction: str) -> tuple[bool, str]:
+        """Multi-Timeframe Confluence Check for M5, M15, M30."""
+        timeframes = ["M5", "M15", "M30"]
+        aligned_tfs = []
+        
+        for tf in timeframes:
+            try:
+                # Fetch data for timeframe
+                df_tf = self.mt5.get_market_data(symbol=self.config.symbol, timeframe=tf, count=100)
+                if len(df_tf) < 50: continue
+                
+                # Apply SMC structure
+                df_tf = self.smc.calculate_all(df_tf)
+                struct = df_tf["market_structure"].tail(1).item()
+                
+                if signal_direction == "BUY" and struct == 1:
+                    aligned_tfs.append(tf)
+                elif signal_direction == "SELL" and struct == -1:
+                    aligned_tfs.append(tf)
+            except Exception:
+                pass
+                
+        # Require AT LEAST 1 out of 3 timeframes to agree to allow the trade
+        is_aligned = len(aligned_tfs) >= 1
+        
+        reason = f"Aligned on {', '.join(aligned_tfs)}" if is_aligned else f"Not aligned on any timeframe (need at least 1/3)"
+        return is_aligned, reason
+    
 async def main():
     """Main entry point."""
     import argparse

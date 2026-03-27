@@ -102,7 +102,7 @@ class AdvancedExitConfig:
     Settings for EKF, PID, Fuzzy Logic, OFI, HJB, Kelly Criterion.
     """
     # Feature flag: enable/disable advanced exits
-    enabled: bool = field(default_factory=lambda: os.getenv("ADVANCED_EXITS_ENABLED", "1") == "1")
+    enabled: bool = False  # Completely disables predictive early exits
 
     # Extended Kalman Filter (EKF) settings
     ekf_friction: float = 0.05              # Velocity decay near TP
@@ -163,8 +163,8 @@ class TradingConfig:
     symbol: str = "XAUUSD"
     
     # Timeframes
-    execution_timeframe: str = "M15"    # Entry timeframe
-    trend_timeframe: str = "H4"         # Trend analysis timeframe
+    execution_timeframe: str = "M1"    # Entry timeframe
+    trend_timeframe: str = "M15"         # Trend analysis timeframe
     
     # Capital
     capital: float = 5000.0
@@ -243,16 +243,16 @@ class TradingConfig:
         - Smart management (no hard SL)
         """
         self.risk = RiskConfig(
-            risk_per_trade=1.0,        # 1% = $50 risk per trade
-            max_daily_loss=3.0,        # 3% daily loss limit
-            max_leverage=100,          # 1:100 leverage
-            max_positions=3,           # Max 3 positions (based on market)
-            max_lot_size=0.05,         # Max 0.05 lot
-            min_lot_size=0.01,         # Min 0.01 lot
+            risk_per_trade=0.5,        # REDUCE from 1.0 to 0.5 (cuts maximum risk ceiling in half)
+            max_daily_loss=2.0,        # REDUCE from 3.0 to 2.0 to protect daily equity
+            max_leverage=100,          
+            max_positions=3,           
+            max_lot_size=5.0,          
+            min_lot_size=0.01,         
             lot_step=0.01,
         )
-        # Focus on single high-liquidity pair
-        self.execution_timeframe = "M15"  # Scalping/day trading
+        # Focus on single high-liquidity pairs
+        self.execution_timeframe = "M1"  # Scalping/day trading
         
     def _configure_medium_account(self):
         """
@@ -260,17 +260,17 @@ class TradingConfig:
         Strategy: Conservative, capital preservation
         """
         self.risk = RiskConfig(
-            risk_per_trade=0.5,        # 0.5% = $250 risk per trade
-            max_daily_loss=2.0,        # 2% daily loss limit
-            max_leverage=30,           # 1:30 leverage (safer)
-            max_positions=5,           # More diversification
-            max_lot_size=2.0,          # Max 2 lots
+            risk_per_trade=0.5,        
+            max_daily_loss=2.0,        
+            max_leverage=30,           
+            max_positions=5,           
+            max_lot_size=5.0,  # <-- Change this to 5.0
             min_lot_size=0.01,
             lot_step=0.01,
         )
         # Swing trading approach
-        self.execution_timeframe = "H1"   # Longer timeframe
-        self.trend_timeframe = "H4"
+        self.execution_timeframe = "M1"   # Longer timeframe
+        self.trend_timeframe = "M15"
     
     @classmethod
     def from_env(cls) -> "TradingConfig":
