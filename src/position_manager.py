@@ -269,15 +269,15 @@ class SmartPositionManager:
 
     def __init__(
         self,
-        breakeven_pips: float = 15.0,      # Fallback if ATR unavailable
-        trail_start_pips: float = 25.0,    # Fallback if ATR unavailable
-        trail_step_pips: float = 10.0,     # Fallback if ATR unavailable
-        min_profit_to_protect: float = 50.0,  # Minimum $ profit to protect
-        max_drawdown_from_peak: float = 30.0,  # Max % drawdown from peak profit
-        # ATR-adaptive exit multipliers (#24B: backtest +$373)
-        atr_be_mult: float = 2.0,          # Breakeven = ATR * 2.0
-        atr_trail_start_mult: float = 4.0, # Trail start = ATR * 4.0
-        atr_trail_step_mult: float = 3.0,  # Trail step = ATR * 3.0
+        breakeven_pips: float = 10.0,      # Was 15.0
+        trail_start_pips: float = 15.0,    # Was 25.0
+        trail_step_pips: float = 5.0,      # Was 10.0
+        min_profit_to_protect: float = 30.0,  # Was 50.0
+        max_drawdown_from_peak: float = 30.0,  
+        # ATR-adaptive exit multipliers
+        atr_be_mult: float = 1.0,          # Was 2.0 (Breakeven triggers at 1.0 ATR)
+        atr_trail_start_mult: float = 2.0, # Was 4.0 (Trail starts at 2.0 ATR)
+        atr_trail_step_mult: float = 1.5,  # Was 3.0
         # Market Close Handler settings
         enable_market_close_handler: bool = True,
         min_profit_before_close: float = 10.0,  # Take profit if >= $10 near close

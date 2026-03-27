@@ -1,0 +1,190 @@
+2026-03-27 09:02:50 | WARNING  | lightgbm not installed (optional for ensemble)
+2026-03-27 09:02:50 | INFO     | Bot lockfile acquired: PID 36828
+2026-03-27 09:02:50 | INFO     | Filter config loaded: 11/11 filters enabled
+2026-03-27 09:02:54 | ERROR    | Database connection failed: connection to server at "localhost" (::1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+
+2026-03-27 09:02:54 | WARNING  | AutoTrainer: Database connection failed, using file
+2026-03-27 09:02:54 | INFO     | AutoTrainer initialized: DB=False, Min AUC=0.65
+2026-03-27 09:02:54 | INFO     | Loaded total loss: $4.46
+2026-03-27 09:02:54 | WARNING  | Could not initialize FuzzyExitController: scikit-fuzzy not installed. Install with: pip install scikit-fuzzy
+2026-03-27 09:02:54 | INFO     |   [OK] Kelly Position Scaler initialized
+2026-03-27 09:02:54 | INFO     |   [OK] Trajectory Predictor initialized
+2026-03-27 09:02:54 | INFO     |   [OK] Momentum Persistence initialized
+2026-03-27 09:02:54 | INFO     |   [OK] Recovery Detector initialized
+2026-03-27 09:02:54 | INFO     | ==================================================
+2026-03-27 09:02:54 | WARNING  | Could not read VERSION file: [Errno 2] No such file or directory: 'C:\\Users\\BGVK38\\Desktop\\Quant_Trading_Bot\\VERSION', using default 0.0.0
+2026-03-27 09:02:54 | INFO     | SMART RISK MANAGER v0.6.0 (Exit v6.3 Predictive Intelligence) INITIALIZED
+2026-03-27 09:02:54 | INFO     |   Capital: $5,000.00
+2026-03-27 09:02:54 | INFO     |   Max Daily Loss: 5.0% ($250.00)
+2026-03-27 09:02:54 | INFO     |   Max Total Loss: 10.0% ($500.00)
+2026-03-27 09:02:54 | INFO     |   Software S/L: 0.5% ($25.00)
+2026-03-27 09:02:54 | INFO     |   Emergency Broker S/L: 2.0% ($100.00)
+2026-03-27 09:02:54 | INFO     |   Max Positions: 2
+2026-03-27 09:02:54 | INFO     |   Base Lot: 0.01
+2026-03-27 09:02:54 | INFO     |   Max Lot: 0.02
+2026-03-27 09:02:54 | INFO     |   Mode: SMART S/L (software + broker safety net)
+2026-03-27 09:02:54 | INFO     |   Advanced Exits: ENABLED (Kalman + Fuzzy + Kelly + Predictive)
+2026-03-27 09:02:54 | INFO     | ==================================================
+2026-03-27 09:02:54 | WARNING  | Telegram notifier disabled - missing BOT_TOKEN or CHAT_ID
+2026-03-27 09:02:54 | INFO     | Telegram notifier initialized (enabled=False)
+2026-03-27 09:02:58 | ERROR    | Database connection failed: connection to server at "localhost" (::1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+
+2026-03-27 09:02:58 | WARNING  | TradeLogger: Database connection failed, using CSV
+2026-03-27 09:02:58 | INFO     | TradeLogger initialized: DB=False, CSV=data\trade_logs
+2026-03-27 09:02:58 | INFO     | Dashboard state restored: 120 prices, 2 logs, loops=1, uptime=0.2h
+2026-03-27 09:02:58 | INFO     | ============================================================
+2026-03-27 09:02:58 | INFO     | XAUBOT AI v0.6.0 (Kalman + Fuzzy + Kelly + Predictive)
+2026-03-27 09:02:58 | INFO     | Strategy: Exit v6.3 Predictive Intelligence
+2026-03-27 09:02:58 | INFO     | ============================================================
+2026-03-27 09:02:58 | INFO     | Symbol: XAUUSD
+2026-03-27 09:02:58 | INFO     | Capital: $5,000.00
+2026-03-27 09:02:58 | INFO     | Mode: small
+2026-03-27 09:02:58 | INFO     | Simulation: False
+2026-03-27 09:02:58 | INFO     | ============================================================
+2026-03-27 09:02:58 | INFO     | Loading trained models...
+2026-03-27 09:02:58 | INFO     | HMM model v3 loaded from models\hmm_regime.pkl
+2026-03-27 09:02:58 | INFO     | HMM Regime model loaded successfully
+2026-03-27 09:02:58 | INFO     | Model loaded from models\xgboost_model.pkl
+2026-03-27 09:02:58 | INFO     |   Type: xgboost_binary
+2026-03-27 09:02:58 | INFO     |   train_auc: 0.7771
+2026-03-27 09:02:58 | INFO     |   test_auc: nan
+2026-03-27 09:02:58 | INFO     | ML V2 Model D loaded successfully
+2026-03-27 09:02:58 | INFO     |   Features: 37
+2026-03-27 09:02:58 | INFO     |   Type: xgboost_binary
+2026-03-27 09:03:01 | INFO     | Connected to MT5: MetaQuotes-Demo (Account: 10010248609)
+2026-03-27 09:03:01 | INFO     | MT5 connected successfully!
+2026-03-27 09:03:01 | INFO     | Account Balance: $99,618.77
+2026-03-27 09:03:01 | INFO     | Account Equity: $99,618.77
+2026-03-27 09:03:01 | INFO     | Session: Sydney (low vol)
+2026-03-27 09:03:01 | INFO     | Can Trade: True - Trading OK - Sydney (SAFE MODE: 0.5x lot)
+2026-03-27 09:03:01 | INFO     | Telegram: Startup message sent
+2026-03-27 09:03:01 | INFO     | Telegram commands registered: /status /market /risk /positions /daily /filters /help
+2026-03-27 09:03:01 | INFO     | Position guards synced: 0 active (MT5 has 0 positions)
+2026-03-27 09:03:01 | INFO     | Starting main trading loop...
+2026-03-27 09:03:02 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-27 09:03:02 | INFO     | Filter config loaded: 11/11 filters enabled
+2026-03-27 09:03:02 | DEBUG    | Fetched 200 bars for XAUUSD M15
+2026-03-27 09:03:02 | DEBUG    | RSI calculated (period=14)
+2026-03-27 09:03:02 | DEBUG    | ATR calculated (period=14)
+2026-03-27 09:03:02 | DEBUG    | MACD calculated (12/26/9)
+2026-03-27 09:03:02 | DEBUG    | Bollinger Bands calculated (period=20, std=2.0)
+2026-03-27 09:03:02 | DEBUG    | EMA crossover calculated (9/21)
+2026-03-27 09:03:02 | DEBUG    | Volume features calculated (period=20, includes OFI & toxicity)
+2026-03-27 09:03:02 | DEBUG    | ML features calculated
+2026-03-27 09:03:02 | DEBUG    | Swing points: 12 highs, 16 lows
+2026-03-27 09:03:02 | DEBUG    | FVG calculation complete. Bullish: 16, Bearish: 20
+2026-03-27 09:03:02 | DEBUG    | Order Blocks: 8 bullish, 11 bearish
+2026-03-27 09:03:02 | DEBUG    | BOS: 0 bullish, 1 bearish
+2026-03-27 09:03:02 | DEBUG    | CHoCH: 2 bullish, 3 bearish
+2026-03-27 09:03:02 | DEBUG    | Fetched 100 bars for XAUUSD H1
+2026-03-27 09:03:02 | DEBUG    | RSI calculated (period=14)
+2026-03-27 09:03:02 | DEBUG    | ATR calculated (period=14)
+2026-03-27 09:03:02 | DEBUG    | MACD calculated (12/26/9)
+2026-03-27 09:03:02 | DEBUG    | Bollinger Bands calculated (period=20, std=2.0)
+2026-03-27 09:03:02 | DEBUG    | EMA crossover calculated (9/21)
+2026-03-27 09:03:02 | DEBUG    | Volume features calculated (period=20, includes OFI & toxicity)
+2026-03-27 09:03:02 | DEBUG    | Swing points: 6 highs, 6 lows
+2026-03-27 09:03:02 | DEBUG    | FVG calculation complete. Bullish: 10, Bearish: 13
+2026-03-27 09:03:02 | DEBUG    | Order Blocks: 4 bullish, 5 bearish
+2026-03-27 09:03:02 | DEBUG    | BOS: 0 bullish, 2 bearish
+2026-03-27 09:03:02 | DEBUG    | CHoCH: 0 bullish, 1 bearish
+2026-03-27 09:03:02 | INFO     | Adding all V2 features (23 new features)...
+2026-03-27 09:03:02 | DEBUG    | H1 features added (8 features)
+2026-03-27 09:03:02 | DEBUG    | Continuous SMC features added (7 features)
+2026-03-27 09:03:02 | DEBUG    | Regime features added (4 features)
+2026-03-27 09:03:02 | DEBUG    | Price action features added (4 features)
+2026-03-27 09:03:02 | INFO     | All V2 features added (23 total)
+2026-03-27 09:03:02 | INFO     | Regime changed: medium_volatility -> high_volatility
+2026-03-27 09:03:02 | INFO     | SMC Signal: SELL @ 4382.43000, SL: 4420.29000, TP: 4325.64000, RR: 1.50, Confidence: 0.63
+2026-03-27 09:03:02 | DEBUG    | Fetched 50 bars for XAUUSD M15
+2026-03-27 09:03:02 | INFO     | Telegram: Hourly analysis report sent
+2026-03-27 09:03:02 | INFO     | Telegram: Hourly analysis report sent
+2026-03-27 09:03:02 | INFO     | [SMC-ONLY] SELL @ 4382.43 (SMC=63%, ML=HOLD 50%, Final=57%)
+2026-03-27 09:03:02 | INFO     | H1 Filter: SELL aligned with H1=BEARISH (+5% boost)
+2026-03-27 09:03:02 | INFO     | Calculated lot: 0.01 (mode=normal, ML=50%, tier=VOLATILE)
+2026-03-27 09:03:02 | INFO     | Sydney SAFE MODE: Lot 0.01 -> 0.01 (0.5x)
+2026-03-27 09:03:02 | INFO     | Smart Risk: Lot=0.01, Risk=$3.79 (0.00%), Mode=normal
+2026-03-27 09:03:02 | INFO     | Emergency SL calculated: 4392.43 ($100.00 max loss)
+2026-03-27 09:03:02 | INFO     | ==================================================
+2026-03-27 09:03:02 | INFO     | SAFE TRADE MODE v2 - SMART S/L
+2026-03-27 09:03:02 | INFO     | ==================================================
+2026-03-27 09:03:02 | INFO     | TRADE SIGNAL: SELL
+2026-03-27 09:03:02 | INFO     |   Entry: 4382.43
+2026-03-27 09:03:02 | INFO     |   TP: 4325.64
+2026-03-27 09:03:02 | INFO     |   Emergency SL: 4392.43 (broker safety net)
+2026-03-27 09:03:02 | INFO     |   Software S/L: $25.00 (smart management)
+2026-03-27 09:03:02 | INFO     |   Lot: 0.01 (Ultra Safe)
+2026-03-27 09:03:02 | INFO     |   Confidence: 59.54%
+2026-03-27 09:03:02 | INFO     |   Reason: SMC-ONLY: Bearish FVG | ML: HOLD (50%)
+2026-03-27 09:03:02 | INFO     | ==================================================
+2026-03-27 09:03:02 | INFO     |   Broker SL: 4420.29 (ATR-based protection)
+2026-03-27 09:03:02 | INFO     | Order executed: SELL 0.01 XAUUSD @ 4382.3
+2026-03-27 09:03:02 | INFO     | SAFE ORDER EXECUTED! ID: 151850500767
+2026-03-27 09:03:02 | INFO     | Slippage OK: $0.13 (1.3 pips)
+2026-03-27 09:03:02 | DEBUG    | Full fill: 0.01 lots
+2026-03-27 09:03:02 | INFO     | Position #151850500767 registered - NO HARD SL, max loss $25.0
+2026-03-27 09:03:02 | DEBUG    | TradeLogger: Recorded open #151850500767
+2026-03-27 09:03:02 | INFO     | Telegram: Trade open notification sent for #151850500767
+2026-03-27 09:03:08 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-27 09:03:08 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-27 09:03:13 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-27 09:03:13 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-27 09:03:13 | INFO     | [DYNAMIC] #151850500767 regime=high_volatility state=stalling P×1.30 L×1.50 | tp_min=$8.0 max_loss=$15.9 eff_max=$24.7 ratchet=$24.7 grace=2.0m ever_profit=N
+2026-03-27 09:03:13 | INFO     | [MOMENTUM] #151850500767 profit=$-2.77 | vel=-0.1086$/s | accel=0.0000 | stag=0s | ATR=17.7(0.99x) | samples=2
+2026-03-27 09:03:19 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-27 09:03:19 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-27 09:03:24 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-27 09:03:24 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-27 09:03:29 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-27 09:03:30 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-27 09:03:30 | INFO     | [GRACE] Loss $5.20 (0.29 ATR) + momentum (-15) vel(-0.384) — holding 0.5m/2.0m grace
+2026-03-27 09:03:35 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-27 09:03:35 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-27 09:03:40 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-27 09:03:40 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-27 09:03:46 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-27 09:03:46 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-27 09:03:46 | INFO     | [MOMENTUM] #151850500767 profit=$-5.18 | vel=0.0092$/s | accel=0.0052 | stag=5s | ATR=17.7(0.99x) | samples=8
+2026-03-27 09:03:51 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-27 09:03:51 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-27 09:03:56 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-27 09:03:57 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-27 09:04:02 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-27 09:04:02 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-27 09:04:07 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-27 09:04:07 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-27 09:04:13 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-27 09:04:13 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-27 09:04:18 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-27 09:04:18 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-27 09:04:18 | INFO     | [DYNAMIC] #151850500767 regime=high_volatility state=steady_profit P×1.30 L×1.50 | tp_min=$8.0 max_loss=$14.3 eff_max=$24.7 ratchet=$24.7 grace=2.0m ever_profit=N
+2026-03-27 09:04:18 | INFO     | [MOMENTUM] #151850500767 profit=$-5.44 | vel=0.0194$/s | accel=0.0011 | stag=16s | ATR=17.7(0.99x) | samples=14
+2026-03-27 09:04:24 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-27 09:04:24 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-27 09:04:29 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-27 09:04:29 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-27 09:04:34 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-27 09:04:35 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-27 09:04:40 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-27 09:04:40 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-27 09:04:45 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-27 09:04:45 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-27 09:04:51 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-27 09:04:51 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-27 09:04:51 | INFO     | [MOMENTUM] #151850500767 profit=$-5.29 | vel=0.0106$/s | accel=0.0009 | stag=11s | ATR=17.7(0.99x) | samples=20
+2026-03-27 09:04:56 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-27 09:04:56 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-27 09:05:01 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-27 09:05:02 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-27 09:05:07 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-27 09:05:07 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-27 09:05:12 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-27 09:05:12 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-27 09:05:18 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-27 09:05:18 | DEBUG    | Fetched 5 bars for XAUUSD M15

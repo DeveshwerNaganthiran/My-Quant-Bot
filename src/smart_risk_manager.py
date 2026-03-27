@@ -996,9 +996,9 @@ class SmartRiskManager:
             profit_mult *= 0.85  # Take profit slightly sooner (extreme vol = fast reversals)
 
         # Clamp multipliers to reasonable ranges
-        # v5c: loss_mult minimum raised 0.3->0.5 (give trades more breathing room)
-        profit_mult = max(0.3, min(2.5, profit_mult))
-        loss_mult = max(0.5, min(2.5, loss_mult))
+        # FORCE TP to stay small (max 1.0) and FORCE SL to stay wide (min 1.0)
+        profit_mult = max(0.2, min(1.0, profit_mult))  # Was max(0.3, min(2.5, ...))
+        loss_mult = max(1.0, min(3.0, loss_mult))      # Was max(0.5, min(2.5, ...))
 
         return profit_mult, loss_mult
 
@@ -1134,26 +1134,25 @@ class SmartRiskManager:
         )
         trade_state = self._classify_trade_state(guard)
 
-        # BASE thresholds (ATR multiples) — these get MULTIPLIED by dynamic factors
-        # Profit thresholds: base * profit_mult * atr_unit
-        tp_min = 0.35 * profit_mult * atr_unit         # Dynamic min TP
-        tp_secure = 0.60 * profit_mult * atr_unit      # Dynamic secure TP
-        tp_hard = 1.20 * profit_mult * atr_unit        # Dynamic hard TP
-        tp_peak_trigger = 0.60 * profit_mult * atr_unit # Dynamic peak trigger
-        tp_prob = 0.50 * profit_mult * atr_unit        # Dynamic TP probability
-        tp_decel = 0.50 * profit_mult * atr_unit       # Dynamic decel check
-        tp_small_min = 0.20 * profit_mult * atr_unit   # Dynamic small min
-        tp_small_max = 0.30 * profit_mult * atr_unit   # Dynamic small max
-        tp_early_min = 0.15 * profit_mult * atr_unit   # Dynamic early exit min
+        # BASE thresholds (ATR multiples)
+        # PROFIT THRESHOLDS (Extremely Tight TP)
+        tp_min = 0.15 * profit_mult * atr_unit         # Was 0.35
+        tp_secure = 0.25 * profit_mult * atr_unit      # Was 0.60
+        tp_hard = 0.40 * profit_mult * atr_unit        # Was 1.20 (Now 3x smaller than SL)
+        tp_peak_trigger = 0.25 * profit_mult * atr_unit # Was 0.60
+        tp_prob = 0.20 * profit_mult * atr_unit        # Was 0.50
+        tp_decel = 0.20 * profit_mult * atr_unit       # Was 0.50
+        tp_small_min = 0.10 * profit_mult * atr_unit   # Was 0.20
+        tp_small_max = 0.15 * profit_mult * atr_unit   # Was 0.30
+        tp_early_min = 0.05 * profit_mult * atr_unit   # Was 0.15
 
-        # Loss thresholds: base * loss_mult * atr_unit
-        max_atr_loss = 0.60 * loss_mult * atr_unit     # Dynamic hard stop
-        stall_loss = -0.35 * loss_mult * atr_unit      # Dynamic stall
-        reversal_loss = -0.20 * loss_mult * atr_unit   # Dynamic reversal
-        warn_loss = -0.30 * loss_mult * atr_unit       # Dynamic warning
-        timeout_loss = -0.35 * loss_mult * atr_unit    # Dynamic timeout
-        stagnant_loss = 0.25 * loss_mult * atr_unit    # Dynamic stagnation
-
+        # LOSS THRESHOLDS (Extremely Wide SL)
+        max_atr_loss = 1.50 * loss_mult * atr_unit     # Was 0.60 (Now almost 4x larger than TP)
+        stall_loss = -0.90 * loss_mult * atr_unit      # Was -0.35
+        reversal_loss = -0.80 * loss_mult * atr_unit   # Was -0.20
+        warn_loss = -0.85 * loss_mult * atr_unit       # Was -0.30
+        timeout_loss = -0.90 * loss_mult * atr_unit    # Was -0.35
+        stagnant_loss = 0.70 * loss_mult * atr_unit    # Was 0.25
         # v0.2.5 FIX #4: max_atr_loss ratchet — can only tighten
         if max_atr_loss < guard.tightest_atr_loss:
             guard.tightest_atr_loss = max_atr_loss
@@ -1553,7 +1552,7 @@ class SmartRiskManager:
         # CHECK -1: NO RECOVERY ZONE ($15 threshold)
         # If loss >= $15, exit immediately - no point waiting for recovery
         # v0.2.5f: Fixed unit — current_profit is in DOLLARS (was 1500=$1500, never triggered)
-        NO_RECOVERY_THRESHOLD = 15.0  # $15.00
+        NO_RECOVERY_THRESHOLD = 50.0  # Was 15.0 - Widen to stop early SL hits
         if current_profit <= -NO_RECOVERY_THRESHOLD:
             return True, ExitReason.POSITION_LIMIT, (
                 f"[NO RECOVERY] Loss ${abs(current_profit):.2f} too deep "
@@ -1563,7 +1562,7 @@ class SmartRiskManager:
         # CHECK 0: EMERGENCY CAP ($20)
         # Absolute maximum loss cap - last resort protection
         # v0.2.5f: Fixed unit — current_profit is in DOLLARS (was 2000=$2000, never triggered)
-        EMERGENCY_MAX_LOSS = 20.0  # $20.00
+        EMERGENCY_MAX_LOSS = 75.0  # Was 20.0 - Widen to stop early SL hits
         if current_profit <= -EMERGENCY_MAX_LOSS:
             return True, ExitReason.POSITION_LIMIT, (
                 f"[EMERGENCY CAP] Max loss ${abs(current_profit):.2f} exceeded "
@@ -2208,18 +2207,17 @@ class SmartRiskManager:
 
 
 def create_smart_risk_manager(capital: float = 5000.0) -> SmartRiskManager:
-    """Create smart risk manager instance with NEW settings."""
     return SmartRiskManager(
         capital=capital,
-        max_daily_loss_percent=5.0,         # Max 5% daily loss
-        max_total_loss_percent=10.0,        # Max 10% total loss (stop trading)
-        max_loss_per_trade_percent=0.5,     # FIX 5 v0.1.1: S/L 0.5% per trade (~$25 for $5k)
-        emergency_sl_percent=2.0,           # Emergency broker SL 2% per trade
-        base_lot_size=0.01,                 # Base lot 0.01 (minimum)
-        max_lot_size=0.02,                  # Maximum 0.02 (sangat kecil)
-        recovery_lot_size=0.01,             # Saat recovery tetap 0.01
-        trend_reversal_threshold=0.65,      # Close jika ML 65%+ yakin (lebih sensitif)
-        max_concurrent_positions=2,         # Max 2 posisi bersamaan
+        max_daily_loss_percent=5.0,         
+        max_total_loss_percent=10.0,        
+        max_loss_per_trade_percent=2.0,     # Was 0.5 - MASSIVELY WIDENS THE SL LIMIT
+        emergency_sl_percent=4.0,           # Was 2.0
+        base_lot_size=0.01,                 
+        max_lot_size=0.02,                  
+        recovery_lot_size=0.01,             
+        trend_reversal_threshold=0.65,      
+        max_concurrent_positions=2,         
     )
 
 
