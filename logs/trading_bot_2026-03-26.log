@@ -1,0 +1,493 @@
+2026-03-26 22:12:51 | WARNING  | lightgbm not installed (optional for ensemble)
+2026-03-26 22:15:35 | WARNING  | lightgbm not installed (optional for ensemble)
+2026-03-26 22:15:35 | WARNING  | Database module not available, using file-based history
+2026-03-26 22:15:35 | WARNING  | Database module not available, using CSV fallback
+2026-03-26 22:15:35 | INFO     | Bot lockfile acquired: PID 41276
+2026-03-26 22:15:35 | WARNING  | Filter config not found at data\filter_config.json, using defaults (all enabled)
+2026-03-26 22:15:35 | INFO     | Filter config saved to data\filter_config.json
+2026-03-26 22:15:36 | INFO     | AutoTrainer initialized: DB=False, Min AUC=0.65
+2026-03-26 22:15:36 | WARNING  | Could not initialize FuzzyExitController: No module named 'src.fuzzy_exit_logic'
+2026-03-26 22:15:36 | WARNING  | Could not initialize KellyPositionScaler: No module named 'src.kelly_position_scaler'
+2026-03-26 22:15:36 | WARNING  | Could not initialize TrajectoryPredictor: No module named 'src.trajectory_predictor'
+2026-03-26 22:15:36 | WARNING  | Could not initialize MomentumPersistence: No module named 'src.momentum_persistence'
+2026-03-26 22:15:36 | WARNING  | Could not initialize RecoveryDetector: No module named 'src.recovery_detector'
+2026-03-26 22:15:36 | INFO     | ==================================================
+2026-03-26 22:15:36 | INFO     | SMART RISK MANAGER v0.6.0 (Exit v6.3 Predictive Intelligence) INITIALIZED
+2026-03-26 22:15:36 | INFO     |   Capital: $5,000.00
+2026-03-26 22:15:36 | INFO     |   Max Daily Loss: 5.0% ($250.00)
+2026-03-26 22:15:36 | INFO     |   Max Total Loss: 10.0% ($500.00)
+2026-03-26 22:15:36 | INFO     |   Software S/L: 0.5% ($25.00)
+2026-03-26 22:15:36 | INFO     |   Emergency Broker S/L: 2.0% ($100.00)
+2026-03-26 22:15:36 | INFO     |   Max Positions: 2
+2026-03-26 22:15:36 | INFO     |   Base Lot: 0.01
+2026-03-26 22:15:36 | INFO     |   Max Lot: 0.02
+2026-03-26 22:15:36 | INFO     |   Mode: SMART S/L (software + broker safety net)
+2026-03-26 22:15:36 | INFO     |   Advanced Exits: ENABLED (Kalman + Fuzzy + Kelly + Predictive)
+2026-03-26 22:15:36 | INFO     | ==================================================
+2026-03-26 22:15:36 | WARNING  | Telegram notifier disabled - missing BOT_TOKEN or CHAT_ID
+2026-03-26 22:15:36 | INFO     | Telegram notifier initialized (enabled=False)
+2026-03-26 22:15:36 | INFO     | TradeLogger initialized: DB=False, CSV=data\trade_logs
+2026-03-26 22:15:36 | INFO     | ============================================================
+2026-03-26 22:15:36 | INFO     | XAUBOT AI v0.0.0 (Core)
+2026-03-26 22:15:36 | INFO     | Strategy: Exit v5.0
+2026-03-26 22:15:36 | INFO     | ============================================================
+2026-03-26 22:15:36 | INFO     | Symbol: XAUUSD
+2026-03-26 22:15:36 | INFO     | Capital: $5,000.00
+2026-03-26 22:15:36 | INFO     | Mode: small
+2026-03-26 22:15:36 | INFO     | Simulation: False
+2026-03-26 22:15:36 | INFO     | ============================================================
+2026-03-26 22:15:36 | INFO     | Loading trained models...
+2026-03-26 22:15:36 | INFO     | HMM model v3 loaded from models\hmm_regime.pkl
+2026-03-26 22:15:36 | INFO     | HMM Regime model loaded successfully
+2026-03-26 22:15:36 | INFO     | Model loaded from models\xgboost_model.pkl
+2026-03-26 22:15:36 | INFO     |   Type: xgboost_binary
+2026-03-26 22:15:36 | INFO     |   train_auc: 0.7771
+2026-03-26 22:15:36 | INFO     |   test_auc: nan
+2026-03-26 22:15:36 | INFO     | ML V2 Model D loaded successfully
+2026-03-26 22:15:36 | INFO     |   Features: 37
+2026-03-26 22:15:36 | INFO     |   Type: xgboost_binary
+2026-03-26 22:15:38 | INFO     | Connected to MT5: MetaQuotes-Demo (Account: 10010248609)
+2026-03-26 22:15:39 | INFO     | MT5 connected successfully!
+2026-03-26 22:15:39 | INFO     | Account Balance: $99,623.02
+2026-03-26 22:15:39 | INFO     | Account Equity: $99,623.02
+2026-03-26 22:15:39 | INFO     | Session: London-NY Overlap (GOLDEN) (extreme vol)
+2026-03-26 22:15:39 | INFO     | Can Trade: True - Trading OK - London-NY Overlap (GOLDEN) (extreme volatility)
+2026-03-26 22:15:39 | INFO     | Telegram: Startup message sent
+2026-03-26 22:15:39 | INFO     | Stopping trading bot...
+2026-03-26 22:15:39 | INFO     | Telegram: Shutdown message sent
+2026-03-26 22:15:39 | INFO     | Disconnected from MT5
+2026-03-26 22:15:39 | INFO     | Bot lockfile released
+2026-03-26 22:16:38 | WARNING  | lightgbm not installed (optional for ensemble)
+2026-03-26 22:16:38 | INFO     | Bot lockfile acquired: PID 41528
+2026-03-26 22:16:38 | INFO     | Filter config loaded: 11/11 filters enabled
+2026-03-26 22:16:42 | ERROR    | Database connection failed: connection to server at "localhost" (::1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+
+2026-03-26 22:16:42 | WARNING  | AutoTrainer: Database connection failed, using file
+2026-03-26 22:16:42 | INFO     | AutoTrainer initialized: DB=False, Min AUC=0.65
+2026-03-26 22:16:43 | WARNING  | Could not initialize FuzzyExitController: scikit-fuzzy not installed. Install with: pip install scikit-fuzzy
+2026-03-26 22:16:43 | INFO     |   [OK] Kelly Position Scaler initialized
+2026-03-26 22:16:43 | INFO     |   [OK] Trajectory Predictor initialized
+2026-03-26 22:16:43 | INFO     |   [OK] Momentum Persistence initialized
+2026-03-26 22:16:43 | INFO     |   [OK] Recovery Detector initialized
+2026-03-26 22:16:43 | INFO     | ==================================================
+2026-03-26 22:16:43 | WARNING  | Could not read VERSION file: [Errno 2] No such file or directory: 'C:\\Users\\BGVK38\\Desktop\\Quant_Trading_Bot\\VERSION', using default 0.0.0
+2026-03-26 22:16:43 | INFO     | SMART RISK MANAGER v0.6.0 (Exit v6.3 Predictive Intelligence) INITIALIZED
+2026-03-26 22:16:43 | INFO     |   Capital: $5,000.00
+2026-03-26 22:16:43 | INFO     |   Max Daily Loss: 5.0% ($250.00)
+2026-03-26 22:16:43 | INFO     |   Max Total Loss: 10.0% ($500.00)
+2026-03-26 22:16:43 | INFO     |   Software S/L: 0.5% ($25.00)
+2026-03-26 22:16:43 | INFO     |   Emergency Broker S/L: 2.0% ($100.00)
+2026-03-26 22:16:43 | INFO     |   Max Positions: 2
+2026-03-26 22:16:43 | INFO     |   Base Lot: 0.01
+2026-03-26 22:16:43 | INFO     |   Max Lot: 0.02
+2026-03-26 22:16:43 | INFO     |   Mode: SMART S/L (software + broker safety net)
+2026-03-26 22:16:43 | INFO     |   Advanced Exits: ENABLED (Kalman + Fuzzy + Kelly + Predictive)
+2026-03-26 22:16:43 | INFO     | ==================================================
+2026-03-26 22:16:43 | WARNING  | Telegram notifier disabled - missing BOT_TOKEN or CHAT_ID
+2026-03-26 22:16:43 | INFO     | Telegram notifier initialized (enabled=False)
+2026-03-26 22:16:47 | ERROR    | Database connection failed: connection to server at "localhost" (::1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+
+2026-03-26 22:16:47 | WARNING  | TradeLogger: Database connection failed, using CSV
+2026-03-26 22:16:47 | INFO     | TradeLogger initialized: DB=False, CSV=data\trade_logs
+2026-03-26 22:16:47 | INFO     | ============================================================
+2026-03-26 22:16:47 | INFO     | XAUBOT AI v0.6.0 (Kalman + Fuzzy + Kelly + Predictive)
+2026-03-26 22:16:47 | INFO     | Strategy: Exit v6.3 Predictive Intelligence
+2026-03-26 22:16:47 | INFO     | ============================================================
+2026-03-26 22:16:47 | INFO     | Symbol: XAUUSD
+2026-03-26 22:16:47 | INFO     | Capital: $5,000.00
+2026-03-26 22:16:47 | INFO     | Mode: small
+2026-03-26 22:16:47 | INFO     | Simulation: False
+2026-03-26 22:16:47 | INFO     | ============================================================
+2026-03-26 22:16:47 | INFO     | Loading trained models...
+2026-03-26 22:16:47 | INFO     | HMM model v3 loaded from models\hmm_regime.pkl
+2026-03-26 22:16:47 | INFO     | HMM Regime model loaded successfully
+2026-03-26 22:16:47 | INFO     | Model loaded from models\xgboost_model.pkl
+2026-03-26 22:16:47 | INFO     |   Type: xgboost_binary
+2026-03-26 22:16:47 | INFO     |   train_auc: 0.7771
+2026-03-26 22:16:47 | INFO     |   test_auc: nan
+2026-03-26 22:16:47 | INFO     | ML V2 Model D loaded successfully
+2026-03-26 22:16:47 | INFO     |   Features: 37
+2026-03-26 22:16:47 | INFO     |   Type: xgboost_binary
+2026-03-26 22:16:49 | INFO     | Connected to MT5: MetaQuotes-Demo (Account: 10010248609)
+2026-03-26 22:16:50 | INFO     | MT5 connected successfully!
+2026-03-26 22:16:50 | INFO     | Account Balance: $99,623.02
+2026-03-26 22:16:50 | INFO     | Account Equity: $99,623.02
+2026-03-26 22:16:50 | INFO     | Session: London-NY Overlap (GOLDEN) (extreme vol)
+2026-03-26 22:16:50 | INFO     | Can Trade: True - Trading OK - London-NY Overlap (GOLDEN) (extreme volatility)
+2026-03-26 22:16:50 | INFO     | Telegram: Startup message sent
+2026-03-26 22:16:50 | INFO     | Telegram commands registered: /status /market /risk /positions /daily /filters /help
+2026-03-26 22:16:50 | INFO     | Position guards synced: 0 active (MT5 has 0 positions)
+2026-03-26 22:16:50 | INFO     | Starting main trading loop...
+2026-03-26 22:16:50 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:16:50 | INFO     | Filter config loaded: 11/11 filters enabled
+2026-03-26 22:16:50 | DEBUG    | Fetched 200 bars for XAUUSD M15
+2026-03-26 22:16:50 | DEBUG    | RSI calculated (period=14)
+2026-03-26 22:16:50 | DEBUG    | ATR calculated (period=14)
+2026-03-26 22:16:50 | DEBUG    | MACD calculated (12/26/9)
+2026-03-26 22:16:50 | DEBUG    | Bollinger Bands calculated (period=20, std=2.0)
+2026-03-26 22:16:50 | DEBUG    | EMA crossover calculated (9/21)
+2026-03-26 22:16:50 | DEBUG    | Volume features calculated (period=20, includes OFI & toxicity)
+2026-03-26 22:16:50 | DEBUG    | ML features calculated
+2026-03-26 22:16:50 | DEBUG    | Swing points: 12 highs, 15 lows
+2026-03-26 22:16:50 | DEBUG    | FVG calculation complete. Bullish: 17, Bearish: 19
+2026-03-26 22:16:50 | DEBUG    | Order Blocks: 9 bullish, 10 bearish
+2026-03-26 22:16:50 | DEBUG    | BOS: 1 bullish, 0 bearish
+2026-03-26 22:16:50 | DEBUG    | CHoCH: 2 bullish, 2 bearish
+2026-03-26 22:16:50 | INFO     | Adding all V2 features (23 new features)...
+2026-03-26 22:16:50 | WARNING  | No H1 data provided, using default H1 features
+2026-03-26 22:16:50 | DEBUG    | Continuous SMC features added (7 features)
+2026-03-26 22:16:50 | DEBUG    | Regime features added (4 features)
+2026-03-26 22:16:50 | DEBUG    | Price action features added (4 features)
+2026-03-26 22:16:50 | INFO     | All V2 features added (23 total)
+2026-03-26 22:16:50 | INFO     | SMC Signal: BUY @ 4459.59000, SL: 4416.38000, TP: 4524.40500, RR: 1.50, Confidence: 0.77
+2026-03-26 22:16:51 | DEBUG    | Fetched 50 bars for XAUUSD M15
+2026-03-26 22:16:51 | INFO     | Telegram: Hourly analysis report sent
+2026-03-26 22:16:51 | INFO     | Telegram: Hourly analysis report sent
+2026-03-26 22:16:51 | INFO     | Price: 4459.59 | Regime: medium_volatility | SMC: BUY | ML: HOLD(50%)
+2026-03-26 22:16:51 | INFO     | Dynamic: excellent (score=85) -> threshold=60%
+2026-03-26 22:16:51 | INFO     | [GOLDEN] [SMC-ONLY] BUY @ 4459.59 (SMC=77%, ML=HOLD 50%, Final=77%)
+2026-03-26 22:16:51 | DEBUG    | H1 Filter: NEUTRAL — no adjustment
+2026-03-26 22:16:51 | INFO     | Calculated lot: 0.01 (mode=normal, ML=50%, tier=LOW)
+2026-03-26 22:16:51 | INFO     | Smart Risk: Lot=0.01, Risk=$4.32 (0.00%), Mode=normal
+2026-03-26 22:16:51 | INFO     | Emergency SL calculated: 4449.59 ($100.00 max loss)
+2026-03-26 22:16:51 | INFO     | ==================================================
+2026-03-26 22:16:51 | INFO     | SAFE TRADE MODE v2 - SMART S/L
+2026-03-26 22:16:51 | INFO     | ==================================================
+2026-03-26 22:16:51 | INFO     | TRADE SIGNAL: BUY
+2026-03-26 22:16:51 | INFO     |   Entry: 4459.59
+2026-03-26 22:16:51 | INFO     |   TP: 4524.41
+2026-03-26 22:16:51 | INFO     |   Emergency SL: 4449.59 (broker safety net)
+2026-03-26 22:16:51 | INFO     |   Software S/L: $25.00 (smart management)
+2026-03-26 22:16:51 | INFO     |   Lot: 0.01 (Ultra Safe)
+2026-03-26 22:16:51 | INFO     |   Confidence: 77.00%
+2026-03-26 22:16:51 | INFO     |   Reason: SMC-ONLY: Bullish BOS/CHoCH + OB | ML: HOLD (50%)
+2026-03-26 22:16:51 | INFO     | ==================================================
+2026-03-26 22:16:51 | INFO     |   Broker SL: 4416.38 (ATR-based protection)
+2026-03-26 22:16:51 | INFO     | Order executed: BUY 0.01 XAUUSD @ 4459.76
+2026-03-26 22:16:51 | INFO     | SAFE ORDER EXECUTED! ID: 151847267455
+2026-03-26 22:16:51 | INFO     | Slippage OK: $0.17 (1.7 pips)
+2026-03-26 22:16:51 | DEBUG    | Full fill: 0.01 lots
+2026-03-26 22:16:51 | INFO     | Position #151847267455 registered - NO HARD SL, max loss $25.0
+2026-03-26 22:16:51 | DEBUG    | TradeLogger: Recorded open #151847267455
+2026-03-26 22:16:51 | INFO     | Telegram: Trade open notification sent for #151847267455
+2026-03-26 22:16:56 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:16:56 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:17:01 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:17:02 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:17:02 | INFO     | [DYNAMIC] #151847267455 regime=medium_volatility state=stalling [GOLDEN] P×0.85 L×0.70 | tp_min=$5.5 max_loss=$7.8 eff_max=$27.5 ratchet=$27.5 grace=1.2m ever_profit=N
+2026-03-26 22:17:02 | INFO     | [MOMENTUM] #151847267455 profit=$-1.33 | vel=-0.1298$/s | accel=0.0000 | stag=0s | ATR=18.6(1.10x) | samples=2
+2026-03-26 22:17:07 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:17:07 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:17:12 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:17:13 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:17:18 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:17:18 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:17:23 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:17:23 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:17:23 | INFO     | [GRACE] Loss $4.06 (0.22 ATR) + momentum (-14) vel(-0.494) — holding 0.5m/1.2m grace
+2026-03-26 22:17:29 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:17:29 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:17:34 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:17:34 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:17:34 | INFO     | [MOMENTUM] #151847267455 profit=$-5.24 | vel=-0.1669$/s | accel=0.0010 | stag=0s | ATR=18.6(1.10x) | samples=8
+2026-03-26 22:17:39 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:17:40 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:17:45 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:17:45 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:17:50 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:17:50 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:17:56 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:17:56 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:18:01 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:18:01 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:18:07 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:18:07 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:18:07 | INFO     | [DYNAMIC] #151847267455 regime=medium_volatility state=accelerating_profit [GOLDEN] P×1.10 L×0.70 | tp_min=$7.2 max_loss=$5.6 eff_max=$27.5 ratchet=$27.5 grace=1.2m ever_profit=N
+2026-03-26 22:18:07 | INFO     | [MOMENTUM] #151847267455 profit=$-3.58 | vel=0.0207$/s | accel=0.0029 | stag=6s | ATR=18.6(1.10x) | samples=14
+2026-03-26 22:18:12 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:18:12 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:18:17 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:18:18 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:18:23 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:18:23 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:18:28 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:18:29 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:18:34 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:18:34 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:18:39 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:18:39 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:18:39 | INFO     | [MOMENTUM] #151847267455 profit=$-4.46 | vel=-0.0926$/s | accel=0.0006 | stag=0s | ATR=18.6(1.10x) | samples=20
+2026-03-26 22:18:39 | INFO     | Smart Close #151847267455: position_limit - [BACKUP-SL] Loss $4.46 (14% of $27.48) — safety net [medium_volatility|L×0.7]
+2026-03-26 22:18:40 | INFO     | Position 151847267455 closed @ 4455.51
+2026-03-26 22:18:40 | INFO     | CLOSED #151847267455: [BACKUP-SL] Loss $4.46 (14% of $27.48) — safety net [medium_volatility|L×0.7]
+2026-03-26 22:18:40 | WARNING  | LOSS recorded: -$4.46 | Daily loss: $4.46 | Total Loss: $4.46
+2026-03-26 22:18:40 | INFO     | TradeLogger: Saved trade #151847267455 | BUY | P/L: $-4.46 | Reason: position_limit
+2026-03-26 22:18:40 | INFO     | Telegram: Trade close notification sent for #151847267455
+2026-03-26 22:18:45 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:18:45 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:18:50 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:18:50 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:18:56 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:18:56 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:19:01 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:19:01 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:19:07 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:19:07 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:19:12 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:19:12 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:19:17 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:19:18 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:19:23 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:19:23 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:19:28 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:19:28 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:19:34 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:19:34 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:19:39 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:19:39 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:19:44 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:19:45 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:19:50 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:19:50 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:19:55 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:19:56 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:20:01 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:20:01 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:20:06 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:20:06 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:20:12 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:20:12 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:20:17 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:20:17 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:20:22 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:20:23 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:20:28 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:20:28 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:20:33 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:20:34 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:20:39 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:20:39 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:20:44 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:20:44 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:20:50 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:20:50 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:20:55 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:20:55 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:21:00 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:21:01 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:21:06 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:21:06 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:21:11 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:21:12 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:21:17 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:21:17 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:21:22 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:21:22 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:21:28 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:21:28 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:21:33 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:21:33 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:21:39 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:21:39 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:21:44 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:21:44 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:21:49 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:21:50 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:21:55 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:21:55 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:22:00 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:22:00 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:22:06 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:22:06 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:22:11 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:22:11 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:22:17 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:22:17 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:22:22 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:22:22 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:22:27 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:22:28 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:22:33 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:22:33 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:22:38 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:22:38 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:22:44 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:22:44 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:22:49 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:22:49 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:22:55 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:22:55 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:23:00 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:23:00 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:23:05 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:23:06 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:23:11 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:23:11 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:23:16 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:23:16 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:23:22 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:23:22 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:23:27 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:23:27 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:23:33 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:23:33 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:23:38 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:23:38 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:23:43 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:23:44 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:23:49 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:23:49 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:23:54 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:23:54 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:24:00 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:24:00 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:24:05 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:24:05 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:24:11 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:24:11 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:24:16 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:24:16 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:24:21 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:24:22 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:24:27 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:24:27 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:24:32 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:24:33 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:24:38 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:24:38 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:24:43 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:24:43 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:24:49 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:24:49 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:24:54 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:24:54 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:24:59 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:25:00 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:25:05 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:25:05 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:25:10 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:25:11 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:25:16 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:25:16 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:25:21 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:25:21 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:25:27 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:25:27 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:25:32 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:25:32 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:25:38 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:25:38 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:25:43 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:25:43 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:25:48 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:25:49 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:25:54 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:25:54 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:25:59 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:25:59 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:26:05 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:26:05 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:26:10 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:26:10 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:26:16 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:26:16 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:26:21 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:26:21 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:26:26 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:26:27 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:26:32 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:26:32 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:26:37 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:26:37 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:26:43 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:26:43 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:26:48 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:26:48 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:26:54 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:26:54 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:26:59 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:26:59 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:27:04 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:27:05 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:27:10 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:27:10 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:27:15 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:27:15 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:27:21 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:27:21 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:27:26 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:27:26 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:27:32 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:27:32 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:27:37 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:27:37 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:27:42 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:27:43 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:27:48 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:27:48 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:27:53 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:27:53 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:27:59 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:27:59 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:28:04 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:28:04 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:28:10 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:28:10 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:28:15 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:28:15 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:28:20 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:28:21 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:28:26 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:28:26 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:28:31 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:28:32 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:28:37 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:28:37 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:28:42 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:28:42 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:28:48 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:28:48 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:28:53 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:28:53 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:28:58 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:28:59 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:29:04 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:29:04 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:29:09 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:29:10 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:29:15 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:29:15 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:29:20 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:29:20 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:29:26 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:29:26 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:29:31 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:29:31 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:29:36 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:29:37 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:29:42 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:29:42 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:29:47 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:29:48 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:29:53 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:29:53 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:29:58 | DEBUG    | Fetched 2 bars for XAUUSD M15
+2026-03-26 22:29:58 | DEBUG    | Fetched 5 bars for XAUUSD M15
+2026-03-26 22:30:01 | INFO     | Stopping trading bot...
+2026-03-26 22:30:01 | INFO     | Telegram: Shutdown message sent
+2026-03-26 22:30:01 | INFO     | Disconnected from MT5
+2026-03-26 22:30:01 | INFO     | ========================================
+2026-03-26 22:30:01 | INFO     | SESSION SUMMARY
+2026-03-26 22:30:01 | INFO     | Total loops: 1
+2026-03-26 22:30:01 | INFO     | Avg execution: 420.58ms
+2026-03-26 22:30:01 | INFO     | Min execution: 408.81ms
+2026-03-26 22:30:01 | INFO     | Max execution: 1042.51ms
+2026-03-26 22:30:01 | INFO     | Trades today: 0
+2026-03-26 22:30:01 | INFO     | ========================================
+2026-03-26 22:30:01 | INFO     | Bot lockfile released

@@ -1,0 +1,88 @@
+{
+  "featureImportance": [
+    {
+      "name": "avg_normalized_range",
+      "importance": 0.0515
+    },
+    {
+      "name": "lower_low",
+      "importance": 0.0487
+    },
+    {
+      "name": "weekday",
+      "importance": 0.0454
+    },
+    {
+      "name": "ema_21",
+      "importance": 0.0451
+    },
+    {
+      "name": "returns_1",
+      "importance": 0.0444
+    },
+    {
+      "name": "ema_9",
+      "importance": 0.0422
+    },
+    {
+      "name": "volatility_20",
+      "importance": 0.041
+    },
+    {
+      "name": "returns_5",
+      "importance": 0.0401
+    },
+    {
+      "name": "returns_20",
+      "importance": 0.0399
+    },
+    {
+      "name": "dist_from_sma_20",
+      "importance": 0.0395
+    },
+    {
+      "name": "normalized_range",
+      "importance": 0.0389
+    },
+    {
+      "name": "macd",
+      "importance": 0.0388
+    },
+    {
+      "name": "bb_width",
+      "importance": 0.0379
+    },
+    {
+      "name": "volume_ratio",
+      "importance": 0.0379
+    },
+    {
+      "name": "log_returns",
+      "importance": 0.0362
+    },
+    {
+      "name": "macd_histogram",
+      "importance": 0.0361
+    },
+    {
+      "name": "atr_percent",
+      "importance": 0.0359
+    },
+    {
+      "name": "rsi",
+      "importance": 0.0356
+    },
+    {
+      "name": "atr",
+      "importance": 0.0348
+    },
+    {
+      "name": "price_position",
+      "importance": 0.032
+    }
+  ],
+  "trainAuc": 0.7770879006576947,
+  "testAuc": NaN,
+  "sampleCount": 501,
+  "updatedAt": "2026-03-26T21:16:47.162028+07:00"
+}
