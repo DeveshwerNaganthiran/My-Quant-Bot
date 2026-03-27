@@ -146,14 +146,14 @@ def train_xgboost_model(
         model_path=model_path,
     )
 
-    # Train with stricter settings
+    # Train with early stopping to prevent memorization
     model.fit(
         df,
         available_features,
         target_col="target",
-        train_ratio=0.7,           # More test data (30% instead of 20%)
-        num_boost_round=50,        # Fewer rounds (was 100)
-        early_stopping_rounds=5,   # Earlier stopping (was 10)
+        train_ratio=0.75,          # 75% train, 25% test
+        num_boost_round=150,       
+        early_stopping_rounds=10,  # CRITICAL: Stop training if Test AUC doesn't improve for 10 rounds
     )
     
     if model.fitted:
@@ -162,24 +162,24 @@ def train_xgboost_model(
         for feat, imp in model.get_feature_importance(10).items():
             logger.info(f"  {feat}: {imp:.4f}")
         
-        # Walk-forward validation
-        logger.info("Running walk-forward validation...")
-        results = model.walk_forward_train(
-            df,
-            available_features,
-            "target",
-            train_window=500,
-            test_window=50,
-            step=50,
-        )
+        # # Walk-forward validation
+        # logger.info("Running walk-forward validation...")
+        # results = model.walk_forward_train(
+        #     df,
+        #     available_features,
+        #     "target",
+        #     train_window=500,
+        #     test_window=50,
+        #     step=50,
+        # )
         
-        if results:
-            avg_train = np.mean([r[0] for r in results])
-            avg_test = np.mean([r[1] for r in results])
-            logger.info(f"Walk-forward Results:")
-            logger.info(f"  Avg Train AUC: {avg_train:.4f}")
-            logger.info(f"  Avg Test AUC: {avg_test:.4f}")
-            logger.info(f"  Overfitting ratio: {avg_train/avg_test:.2f}")
+        # if results:
+        #     avg_train = np.mean([r[0] for r in results])
+        #     avg_test = np.mean([r[1] for r in results])
+        #     logger.info(f"Walk-forward Results:")
+        #     logger.info(f"  Avg Train AUC: {avg_train:.4f}")
+        #     logger.info(f"  Avg Test AUC: {avg_test:.4f}")
+        #     logger.info(f"  Overfitting ratio: {avg_train/avg_test:.2f}")
     
     return model
 

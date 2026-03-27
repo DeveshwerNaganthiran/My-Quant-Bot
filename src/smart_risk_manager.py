@@ -781,12 +781,17 @@ class SmartRiskManager:
         # Use the more conservative of confidence or ml_confidence
         effective_confidence = min(confidence, ml_confidence)
 
-        if effective_confidence >= 0.65:
+        # STRICT 70% CUTOFF - Kill the trade if below 70%
+        if effective_confidence < 0.70:
+            logger.info(f"Trade rejected: Confidence {effective_confidence:.1%} is below strict 70% threshold")
+            return 0  # <-- Returning 0 lot size tells the bot NOT to open the trade
+
+        if effective_confidence >= 0.75:
             # High confidence: allow max lot
             lot = self.max_lot_size
             confidence_tier = "HIGH"
-        elif effective_confidence >= 0.55:
-            # Medium confidence: base lot
+        elif effective_confidence >= 0.70:
+            # Medium/Base confidence
             lot = self.base_lot_size
             confidence_tier = "MEDIUM"
         else:
@@ -1137,8 +1142,8 @@ class SmartRiskManager:
         # BASE thresholds (ATR multiples)
         # PROFIT THRESHOLDS (Extremely Tight TP)
         tp_min = 0.15 * profit_mult * atr_unit         # Was 0.35
-        tp_secure = 0.25 * profit_mult * atr_unit      # Was 0.60
-        tp_hard = 0.40 * profit_mult * atr_unit        # Was 1.20 (Now 3x smaller than SL)
+        tp_hard = 1.00 * profit_mult * atr_unit        # Increased from 0.40
+        tp_secure = 0.75 * profit_mult * atr_unit
         tp_peak_trigger = 0.25 * profit_mult * atr_unit # Was 0.60
         tp_prob = 0.20 * profit_mult * atr_unit        # Was 0.50
         tp_decel = 0.20 * profit_mult * atr_unit       # Was 0.50
@@ -1147,7 +1152,7 @@ class SmartRiskManager:
         tp_early_min = 0.05 * profit_mult * atr_unit   # Was 0.15
 
         # LOSS THRESHOLDS (Extremely Wide SL)
-        max_atr_loss = 1.50 * loss_mult * atr_unit     # Was 0.60 (Now almost 4x larger than TP)
+        max_atr_loss = 1.00 * loss_mult * atr_unit     # Decreased from 1.50
         stall_loss = -0.90 * loss_mult * atr_unit      # Was -0.35
         reversal_loss = -0.80 * loss_mult * atr_unit   # Was -0.20
         warn_loss = -0.85 * loss_mult * atr_unit       # Was -0.30
@@ -2211,8 +2216,8 @@ def create_smart_risk_manager(capital: float = 5000.0) -> SmartRiskManager:
         capital=capital,
         max_daily_loss_percent=5.0,         
         max_total_loss_percent=10.0,        
-        max_loss_per_trade_percent=2.0,     # Was 0.5 - MASSIVELY WIDENS THE SL LIMIT
-        emergency_sl_percent=4.0,           # Was 2.0
+        max_loss_per_trade_percent=0.75,     # Changed back down from 2.0
+        emergency_sl_percent=1.5,            # Changed back down from 4.0
         base_lot_size=0.01,                 
         max_lot_size=0.02,                  
         recovery_lot_size=0.01,             

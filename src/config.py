@@ -48,7 +48,7 @@ class SMCConfig:
 class MLConfig:
     """Machine Learning model configuration."""
     model_path: str = "models/xgboost_model.json"
-    confidence_threshold: float = 0.65  # Minimum AI confidence for entry
+    confidence_threshold: float = 0.75  # Minimum AI confidence for entry
     retrain_frequency_days: int = 7     # Retrain model every N days
     lookback_periods: int = 1000        # Training data lookback
 
@@ -60,8 +60,8 @@ class ThresholdsConfig:
     All hard-coded thresholds should be defined here.
     """
     # ML Confidence Thresholds
-    ml_min_confidence: float = 0.65        # Minimum confidence to consider signal
-    ml_entry_confidence: float = 0.70      # Default confidence for entry
+    ml_min_confidence: float = 0.75        # Minimum confidence to consider signal
+    ml_entry_confidence: float = 0.75      # Default confidence for entry
     ml_high_confidence: float = 0.75       # High confidence threshold
     ml_very_high_confidence: float = 0.80  # Very high confidence (lot multiplier)
 

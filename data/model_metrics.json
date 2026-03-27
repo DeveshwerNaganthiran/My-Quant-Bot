@@ -1,88 +1,88 @@
 {
   "featureImportance": [
     {
-      "name": "avg_normalized_range",
-      "importance": 0.0515
-    },
-    {
-      "name": "lower_low",
-      "importance": 0.0487
-    },
-    {
-      "name": "weekday",
-      "importance": 0.0454
-    },
-    {
-      "name": "ema_21",
-      "importance": 0.0451
-    },
-    {
-      "name": "returns_1",
-      "importance": 0.0444
-    },
-    {
-      "name": "ema_9",
-      "importance": 0.0422
-    },
-    {
-      "name": "volatility_20",
-      "importance": 0.041
-    },
-    {
-      "name": "returns_5",
-      "importance": 0.0401
-    },
-    {
-      "name": "returns_20",
-      "importance": 0.0399
-    },
-    {
-      "name": "dist_from_sma_20",
-      "importance": 0.0395
-    },
-    {
-      "name": "normalized_range",
-      "importance": 0.0389
+      "name": "ob",
+      "importance": 0.4563
     },
     {
       "name": "macd",
-      "importance": 0.0388
+      "importance": 0.0338
     },
     {
-      "name": "bb_width",
-      "importance": 0.0379
-    },
-    {
-      "name": "volume_ratio",
-      "importance": 0.0379
-    },
-    {
-      "name": "log_returns",
-      "importance": 0.0362
-    },
-    {
-      "name": "macd_histogram",
-      "importance": 0.0361
-    },
-    {
-      "name": "atr_percent",
-      "importance": 0.0359
+      "name": "returns_1",
+      "importance": 0.033
     },
     {
       "name": "rsi",
-      "importance": 0.0356
-    },
-    {
-      "name": "atr",
-      "importance": 0.0348
+      "importance": 0.0324
     },
     {
       "name": "price_position",
-      "importance": 0.032
+      "importance": 0.0294
+    },
+    {
+      "name": "dist_from_sma_20",
+      "importance": 0.0276
+    },
+    {
+      "name": "log_returns",
+      "importance": 0.0272
+    },
+    {
+      "name": "ema_9",
+      "importance": 0.0255
+    },
+    {
+      "name": "bb_width",
+      "importance": 0.0231
+    },
+    {
+      "name": "returns_20",
+      "importance": 0.0229
+    },
+    {
+      "name": "atr",
+      "importance": 0.0223
+    },
+    {
+      "name": "hh_count_5",
+      "importance": 0.0219
+    },
+    {
+      "name": "returns_5",
+      "importance": 0.0219
+    },
+    {
+      "name": "ema_21",
+      "importance": 0.0217
+    },
+    {
+      "name": "avg_normalized_range",
+      "importance": 0.0214
+    },
+    {
+      "name": "normalized_range",
+      "importance": 0.0203
+    },
+    {
+      "name": "higher_high",
+      "importance": 0.0199
+    },
+    {
+      "name": "macd_histogram",
+      "importance": 0.0198
+    },
+    {
+      "name": "macd_signal",
+      "importance": 0.0191
+    },
+    {
+      "name": "volume_ratio",
+      "importance": 0.0169
     }
   ],
-  "trainAuc": 0.7770879006576947,
-  "testAuc": NaN,
-  "sampleCount": 501,
-  "updatedAt": "2026-03-27T08:02:58.781305+07:00"
+  "trainAuc": 0.6706318865979222,
+  "testAuc": 0.6109494348089985,
+  "sampleCount": 14837,
+  "updatedAt": "2026-03-27T09:24:05.112153+07:00"
 }

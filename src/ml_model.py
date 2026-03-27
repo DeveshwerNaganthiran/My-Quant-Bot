@@ -66,21 +66,21 @@ class TradingModel:
         self.confidence_threshold = confidence_threshold
         self.model_path = Path(model_path) if model_path else None
         
-        # Default XGBoost parameters - TUNED TO PREVENT OVERFITTING
+        # Balanced XGBoost parameters - Prevents 99% memorization
         self.params = params or {
             "objective": "binary:logistic",
             "eval_metric": "auc",
-            "max_depth": 3,            # Reduced from 6 to prevent overfitting
-            "learning_rate": 0.05,     # Reduced from 0.1 for smoother learning
+            "max_depth": 4,            # Down from 6 (stops it from memorizing exact prices)
+            "learning_rate": 0.05,     # Down from 0.1 (forces it to learn slower/better)
             "tree_method": "hist",
             "device": "cpu",
-            "min_child_weight": 10,    # Increased from 1 to require more samples per leaf
-            "subsample": 0.7,          # Reduced from 0.8 for more regularization
-            "colsample_bytree": 0.6,   # Reduced from 0.8 for more regularization
-            "reg_alpha": 1.0,          # Increased L1 regularization (was 0.1)
-            "reg_lambda": 5.0,         # Increased L2 regularization (was 1.0)
-            "gamma": 1.0,              # Added minimum loss reduction for split
-            "max_delta_step": 1,       # Added to help with imbalanced classes
+            "min_child_weight": 5,     # Up from 1 (requires at least 5 examples to make a rule)
+            "subsample": 0.7,          # Down from 0.8 (hides 30% of data each round)
+            "colsample_bytree": 0.7,   # Down from 0.8 (hides 30% of features each round)
+            "reg_alpha": 0.5,          # L1 Regularization (snips useless branches)
+            "reg_lambda": 2.0,         # L2 Regularization (shrinks extreme weights)
+            "gamma": 0.5,              # Minimum loss reduction to make a new branch
+            "max_delta_step": 1,       
         }
         
         self.model: Optional[xgb.Booster] = None
