@@ -54,10 +54,55 @@ class FeatureEngineer:
         df = self.calculate_bollinger_bands(df)
         df = self.calculate_ema_crossover(df)
         df = self.calculate_volume_features(df)
+        df = self.calculate_patterns(df)
         
         if include_ml_features:
             df = self.calculate_ml_features(df)
         
+        return df
+    
+    def calculate_patterns(self, df: pl.DataFrame, lookback: int = 20) -> pl.DataFrame:
+        """
+        Calculate continuous structural market features.
+        Instead of rigidly defining "Perfect W" or "Perfect M", we give XGBoost
+        the structural coordinates so it can learn "Crooked" real-world patterns.
+        """
+        # 1. Macro Structure Limits
+        df = df.with_columns([
+            pl.col("high").rolling_max(window_size=lookback).alias("struct_high"),
+            pl.col("low").rolling_min(window_size=lookback).alias("struct_low"),
+            pl.col("close").rolling_mean(window_size=lookback).alias("struct_mean"),
+        ])
+
+        # 2. Continuous "Crooked" Pattern Features
+        df = df.with_columns([
+            # A. Depth & Proximity (Allows AI to see crooked Double Tops/Bottoms)
+            # If price is near struct_low, AI knows we are testing a bottom.
+            ((pl.col("close") - pl.col("struct_low")) / (pl.col("struct_low") + 1e-9) * 100).alias("dist_from_struct_low"),
+            ((pl.col("struct_high") - pl.col("close")) / (pl.col("close") + 1e-9) * 100).alias("dist_from_struct_high"),
+            
+            # B. Range Compression (Allows AI to see messy Triangles/Wedges)
+            # How tight is the current structure? (0.1 = very tight/sideways, 2.0 = massive volatility)
+            ((pl.col("struct_high") - pl.col("struct_low")) / pl.col("struct_mean") * 100).alias("struct_compression_pct"),
+            
+            # C. Position in Range (0.0 to 1.0)
+            # 0.0 = exactly at support, 1.0 = exactly at resistance, 0.5 = middle of chop
+            ((pl.col("close") - pl.col("struct_low")) / (pl.col("struct_high") - pl.col("struct_low") + 1e-9)).alias("struct_position"),
+        ])
+
+        # 3. Liquidity Sweep Metrics (Allows AI to see crooked Pin Bars/Hammers)
+        df = df.with_columns([
+            # Wick ratio: How much of the candle is just a wick? (High values = aggressive rejections)
+            ((pl.col("high") - pl.col("close")).abs() / (pl.col("high") - pl.col("low") + 1e-9)).alias("upper_wick_ratio"),
+            ((pl.col("close") - pl.col("low")).abs() / (pl.col("high") - pl.col("low") + 1e-9)).alias("lower_wick_ratio"),
+            
+            # Candle body size relative to the lookback structure (Identifies violent breakouts)
+            ((pl.col("close") - pl.col("open")).abs() / (pl.col("struct_high") - pl.col("struct_low") + 1e-9)).alias("body_to_struct_ratio"),
+        ])
+
+        # Cleanup
+        df = df.drop(["struct_high", "struct_low", "struct_mean"])
+        logger.debug("Continuous structural patterns calculated for ML.")
         return df
     
     def calculate_rsi(
@@ -329,6 +374,11 @@ class FeatureEngineer:
                 .alias(f"ema_{slow_period}"),
         ])
         
+        df = df.with_columns([
+            ((pl.col(column) - pl.col(f"ema_{fast_period}")) / pl.col(f"ema_{fast_period}") * 100).alias(f"ema_{fast_period}_dist_pct"),
+            ((pl.col(column) - pl.col(f"ema_{slow_period}")) / pl.col(f"ema_{slow_period}") * 100).alias(f"ema_{slow_period}_dist_pct"),
+        ])
+
         # EMA crossover detection
         df = df.with_columns([
             (pl.col(f"ema_{fast_period}") > pl.col(f"ema_{slow_period}"))

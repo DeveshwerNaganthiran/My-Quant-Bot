@@ -198,7 +198,7 @@ class TradingBot:
         self._execution_times: list = []
         self._current_date = date.today()
         self._models_loaded = False
-        self._trade_cooldown_seconds = 60  # OPTIMIZED: 2.5 min (~10 bars on M15) - was 300
+        self._trade_cooldown_seconds = 15  # CHANGED: 15 second cooldown between trades
         self._start_time = datetime.now()
         self._daily_start_balance: float = 0
         self._total_session_profit: float = 0
@@ -1148,11 +1148,8 @@ class TradingBot:
 
                 current_candle_time = df_check["time"].tail(1).item()
 
-                # Check if new candle formed
-                is_new_candle = (
-                    self._last_candle_time is None or
-                    current_candle_time > self._last_candle_time
-                )
+                # FORCE EVALUATION EVERY LOOP (Ignore candle close time)
+                is_new_candle = True
 
                 if is_new_candle:
                     # NEW CANDLE: Run full analysis

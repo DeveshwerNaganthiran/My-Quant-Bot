@@ -230,24 +230,34 @@ def main():
         return
     
     try:
-        # Fetch data - MORE DATA for better generalization
+        # Fetch data - 1 YEAR OF DATA
+        # M1 timeframe: 1 year is approx 370,000 bars
+        # M5 timeframe: 1 year is approx 75,000 bars
+        # H1 timeframe: 1 year is approx 6,200 bars
+        
+        # Let's train on M5 as the primary anchor to avoid M1 noise, 
+        # but you can change this back to config.execution_timeframe if preferred.
+        training_timeframe = "M5" 
+        historical_bars = 100000  # Pull 100k bars to get immense historical context
+        
+        logger.info(f"Initiating MASSIVE data fetch: {historical_bars} bars on {training_timeframe}")
+        
         df = fetch_training_data(
             connector,
             config.symbol,
-            config.execution_timeframe,
-            bars=15000,  # Increased for better HMM regime separation
+            training_timeframe,
+            bars=historical_bars, 
         )
         
-        # Prepare features
+        # Prepare features (now includes W, M, and Sideways)
         df = prepare_features(df)
         
         # Save raw data
         save_training_data(df)
         
-        # Train HMM
+        # Train HMM (Increased lookback for massive data)
         hmm_model = train_hmm_model(df)
         
-        # Add regime to features
         if hmm_model.fitted:
             df = hmm_model.predict(df)
         

@@ -176,38 +176,14 @@ class RiskEngine:
         regime_multiplier: float = 1.0,
     ) -> PositionSizeResult:
         """
-        Calculate position size using Risk-Constrained Kelly Criterion.
-        
-        Kelly Formula: f* = (p * b - q) / b
-        Where:
-        - p = probability of winning
-        - q = probability of losing (1 - p)
-        - b = win/loss ratio
-        
-        We use Half-Kelly for safety.
-        
-        Args:
-            entry_price: Planned entry price
-            stop_loss_price: Stop loss price
-            take_profit_price: Take profit price
-            account_balance: Current account balance
-            win_rate: Historical win rate (0-1)
-            avg_win_loss_ratio: Average win/loss ratio
-            regime_multiplier: Position size multiplier from regime detection
-            
-        Returns:
-            PositionSizeResult with calculated lot size
+        Calculate position size using Equity-Based Scaling.
         """
         # Validate inputs
         if entry_price <= 0 or stop_loss_price <= 0 or take_profit_price <= 0:
             return PositionSizeResult(
-                lot_size=0,
-                risk_amount=0,
-                risk_percent=0,
-                stop_distance=0,
-                take_profit_distance=0,
-                approved=False,
-                rejection_reason="Invalid price levels",
+                lot_size=0, risk_amount=0, risk_percent=0,
+                stop_distance=0, take_profit_distance=0,
+                approved=False, rejection_reason="Invalid price levels",
             )
         
         # Calculate distances
@@ -216,58 +192,23 @@ class RiskEngine:
         
         if stop_distance == 0:
             return PositionSizeResult(
-                lot_size=0,
-                risk_amount=0,
-                risk_percent=0,
-                stop_distance=0,
-                take_profit_distance=tp_distance,
-                approved=False,
-                rejection_reason="Stop loss distance is zero",
+                lot_size=0, risk_amount=0, risk_percent=0,
+                stop_distance=0, take_profit_distance=tp_distance,
+                approved=False, rejection_reason="Stop loss distance is zero",
             )
         
-        # Calculate Kelly fraction
-        p = win_rate
-        q = 1 - p
-        b = avg_win_loss_ratio
-        
-        # Full Kelly
-        if b > 0:
-            kelly = (p * b - q) / b
+        # === NEW: Equity Based Scaling ===
+        if getattr(self.risk_config, 'use_equity_scaling', True):
+            # Scale dynamically: e.g. ($100 / $5) * 0.1 = 2.0 lots
+            lot_size = (account_balance / self.risk_config.equity_step) * self.risk_config.lot_per_step
         else:
-            kelly = 0
+            # Fallback (Old Kelly Logic) can be placed here if desired
+            lot_size = self.risk_config.min_lot_size
+            
+        # Optional: apply regime multiplier to scale down in bad markets
+        lot_size = lot_size * regime_multiplier
         
-        # Cap Kelly at reasonable level (never risk more than 25%)
-        kelly = max(0, min(kelly, 0.25))
-        
-        # Use Half-Kelly for safety
-        half_kelly = kelly * 0.5
-        
-        # Apply regime multiplier
-        adjusted_kelly = half_kelly * regime_multiplier
-        
-        # Calculate risk amount (but cap at config limit)
-        max_risk_percent = self.risk_config.risk_per_trade / 100
-        actual_risk_percent = min(adjusted_kelly, max_risk_percent)
-        risk_amount = account_balance * actual_risk_percent
-        
-        # Calculate lot size
-        # For XAUUSD: pip value varies, using simplified calculation
-        symbol = self.config.symbol
-        if "XAU" in symbol:
-            # Gold: $1 per 0.01 lot per point ($0.1 move)
-            pip_value_per_lot = 1.0
-            pips = stop_distance / 0.1
-        else:
-            # Standard forex
-            pip_value_per_lot = 10.0
-            pips = stop_distance / 0.0001
-        
-        if pips > 0 and pip_value_per_lot > 0:
-            lot_size = risk_amount / (pips * pip_value_per_lot)
-        else:
-            lot_size = 0
-        
-        # Round to lot step and apply limits
+        # Round to lot step and apply hard config limits (Max 5.0)
         lot_size = round(lot_size / self.risk_config.lot_step) * self.risk_config.lot_step
         lot_size = max(self.risk_config.min_lot_size, min(lot_size, self.risk_config.max_lot_size))
         
@@ -279,8 +220,16 @@ class RiskEngine:
             approved = False
             rejection_reason = f"Lot size {lot_size} below minimum {self.risk_config.min_lot_size}"
         
+        # Calculate resulting risk in USD for reporting
+        if "XAU" in self.config.symbol:
+            pip_value_per_lot = 1.0
+            pips = stop_distance / 0.1
+        else:
+            pip_value_per_lot = 10.0
+            pips = stop_distance / 0.0001
+            
         actual_risk = lot_size * pips * pip_value_per_lot
-        actual_risk_pct = (actual_risk / account_balance) * 100
+        actual_risk_pct = (actual_risk / account_balance) * 100 if account_balance > 0 else 0
         
         return PositionSizeResult(
             lot_size=lot_size,

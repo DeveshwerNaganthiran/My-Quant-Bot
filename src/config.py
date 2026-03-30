@@ -34,6 +34,10 @@ class RiskConfig:
     min_lot_size: float            # Minimum lot size
     lot_step: float                # Lot size increment
     
+    # --- NEW: Equity Based Scaling ---
+    use_equity_scaling: bool = True
+    equity_step: float = 5.0       # For every $5 in the account...
+    lot_per_step: float = 0.1
 
 @dataclass
 class SMCConfig:
@@ -311,46 +315,28 @@ class TradingConfig:
         account_balance: Optional[float] = None,
     ) -> float:
         """
-        Calculate position size based on Risk-Constrained Kelly Criterion.
-        
-        Formula: Lot Size = (Account Balance * Risk%) / (SL Distance in pips * Pip Value)
-        
-        Args:
-            entry_price: Entry price
-            stop_loss_price: Stop loss price
-            account_balance: Current account balance (uses capital if None)
-        
-        Returns:
-            Calculated lot size (rounded to lot_step)
+        Calculate position size strictly based on equity scaling.
+        Formula: Lot Size = (Account Balance / Equity Step) * Lot Per Step
         """
         balance = account_balance or self.capital
-        risk_amount = balance * (self.risk.risk_per_trade / 100)
         
-        # Calculate SL distance in price
-        sl_distance = abs(entry_price - stop_loss_price)
-        
-        if sl_distance == 0:
-            return self.risk.min_lot_size
-        
-        # For XAUUSD: 1 pip = 0.1, pip value per lot ~$1
-        # Simplified calculation - adjust pip_value based on symbol
-        if "XAU" in self.symbol:
-            pip_value_per_lot = 1.0  # $1 per 0.1 move per lot
-            sl_pips = sl_distance / 0.1
+        if getattr(self.risk, 'use_equity_scaling', True):
+            # Calculate strictly based on equity proportionality
+            lot_size = (balance / self.risk.equity_step) * self.risk.lot_per_step
         else:
-            pip_value_per_lot = 10.0  # Standard forex
-            sl_pips = sl_distance / 0.0001
+            # Fallback if equity scaling is disabled
+            risk_amount = balance * (self.risk.risk_per_trade / 100)
+            sl_distance = abs(entry_price - stop_loss_price)
+            if sl_distance == 0:
+                return self.risk.min_lot_size
+            pip_value_per_lot = 1.0 if "XAU" in self.symbol else 10.0
+            sl_pips = sl_distance / (0.1 if "XAU" in self.symbol else 0.0001)
+            lot_size = risk_amount / (sl_pips * pip_value_per_lot) * 0.5
         
-        # Calculate lot size
-        lot_size = risk_amount / (sl_pips * pip_value_per_lot)
-        
-        # Apply Half-Kelly for safety (reduces volatility)
-        lot_size *= 0.5
-        
-        # Round to lot step
+        # Round to nearest lot step
         lot_size = round(lot_size / self.risk.lot_step) * self.risk.lot_step
         
-        # Apply limits
+        # Apply the absolute minimum and maximum limits (Max 5.0)
         lot_size = max(self.risk.min_lot_size, min(lot_size, self.risk.max_lot_size))
         
         return lot_size

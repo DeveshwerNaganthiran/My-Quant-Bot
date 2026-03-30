@@ -316,7 +316,16 @@ class MLTrainerV3:
         exclude_cols = {
             'time', 'open', 'high', 'low', 'close', 'volume',
             'target', 'target_label', 'barrier_hit', 'bars_to_barrier',
-            'return_pct', 'smc_signal', 'smc_confidence', 'smc_reason'
+            'return_pct', 'smc_signal', 'smc_confidence', 'smc_reason',
+            
+            # ---> ADD THESE POISONOUS ABSOLUTE PRICES HERE <---
+            "close_lag_1", "close_lag_2", "close_lag_3", "close_lag_5",
+            "ema_9", "ema_21", "h1_ema20",
+            "bb_upper", "bb_middle", "bb_lower",
+            "fvg_top", "fvg_bottom", "ob_top", "ob_bottom",
+            "last_swing_high", "last_swing_low", 
+            "swing_high_level", "swing_low_level",
+            "h1_close", "h1_ema_20"
         }
 
         feature_cols = [

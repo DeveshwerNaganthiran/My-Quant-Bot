@@ -70,17 +70,17 @@ class TradingModel:
         self.params = params or {
             "objective": "binary:logistic",
             "eval_metric": "auc",
-            "max_depth": 4,            # Down from 6 (stops it from memorizing exact prices)
-            "learning_rate": 0.05,     # Down from 0.1 (forces it to learn slower/better)
+            "max_depth": 6,            # INCREASED from 4 (allows it to see W + MACD + Choch simultaneously)
+            "learning_rate": 0.01,     # DECREASED from 0.05 (slower learning = higher final accuracy)
             "tree_method": "hist",
             "device": "cpu",
-            "min_child_weight": 5,     # Up from 1 (requires at least 5 examples to make a rule)
-            "subsample": 0.7,          # Down from 0.8 (hides 30% of data each round)
-            "colsample_bytree": 0.7,   # Down from 0.8 (hides 30% of features each round)
-            "reg_alpha": 0.5,          # L1 Regularization (snips useless branches)
-            "reg_lambda": 2.0,         # L2 Regularization (shrinks extreme weights)
-            "gamma": 0.5,              # Minimum loss reduction to make a new branch
-            "max_delta_step": 1,       
+            "min_child_weight": 3,     # DECREASED from 5 (allows it to learn slightly rarer patterns)
+            "subsample": 0.8,          # INCREASED from 0.7 
+            "colsample_bytree": 0.8,   # INCREASED from 0.7
+            "reg_alpha": 0.1,          # LOWERED L1 penalty
+            "reg_lambda": 1.0,         # LOWERED L2 penalty
+            "gamma": 0.1,              # LOWERED minimum loss reduction
+            "scale_pos_weight": 1.0    # (This gets dynamically updated in the fit function anyway)
         }
         
         self.model: Optional[xgb.Booster] = None
@@ -134,6 +134,18 @@ class TradingModel:
         X = df_clean.select(available_features).to_numpy()
         y = df_clean.select(target_col).to_numpy().ravel()
         
+
+        num_positive = np.sum(y == 1)
+        num_negative = np.sum(y == 0)
+        
+        if num_positive > 0:
+            scale_weight = num_negative / num_positive
+            self.params["scale_pos_weight"] = scale_weight
+            logger.info(f"Target Imbalance -> UP: {num_positive}, DOWN: {num_negative}")
+            logger.info(f"Applied scale_pos_weight of {scale_weight:.2f} to balance predictions")
+        else:
+            logger.error("NO BUY TARGETS FOUND IN DATASET! Cannot train.")
+            return self
         # Handle any NaN/inf
         X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
         
@@ -487,44 +499,40 @@ class TradingModel:
 
 
 def get_default_feature_columns() -> List[str]:
-    """Get default feature columns for ML model."""
     return [
-        # Technical indicators
-        "rsi", "atr", "atr_percent",
-        "macd", "macd_signal", "macd_histogram",
+        # Technical indicators (STATIONARY)
+        "rsi", "atr_percent", 
+        "macd", "macd_histogram",
         "bb_percent_b", "bb_width",
-        "ema_9", "ema_21",
         
-        # Returns and momentum
-        "returns_1", "returns_5", "returns_20",
-        "log_returns",
+        # New distance metrics replacing raw prices
+        "ema_9_dist_pct", "ema_21_dist_pct", 
         
-        # Volatility
-        "volatility_20", "normalized_range", "avg_normalized_range",
+        # Returns and momentum (These are safe)
+        "returns_1", "returns_5", "returns_20", "log_returns",
         
-        # Price position
-        "price_position", "dist_from_sma_20",
+        # Volatility (Safe)
+        "volatility_20", "normalized_range", 
         
-        # Trend
-        "higher_high", "lower_low",
-        "hh_count_5", "ll_count_5",
+        # SMC Normalized distances replacing raw levels
+        "fvg_top_dist_atr", "ob_top_dist_atr",
         
-        # Volume
-        "volume_ratio", "high_volume",
+        # Boolean / Count features (Safe)
+        "higher_high", "lower_low", "hh_count_5", "ll_count_5",
+        "bos", "choch", "market_structure",
         
-        # SMC signals (numeric)
-        "swing_high", "swing_low",
-        "fvg_signal",
-        "ob",
-        "bos", "choch",
-        "market_structure",
-        
-        # Time features
-        "hour", "weekday",
-        "london_session", "ny_session",
-        
-        # Regime
-        "regime",
+        # --- NEW: ADVANCED PATTERNS ---
+        "is_sideways", "dist_from_bottom", "dist_from_top",
+        "pattern_W_bottom", "pattern_M_top", 
+        "pattern_contraction", 
+        "pattern_bull_breakout", "pattern_bear_breakout",
+        "pattern_bull_rejection", "pattern_bear_rejection"
+
+        # --- NEW: CONTINUOUS STRUCTURAL PATTERNS ---
+        "dist_from_struct_low", "dist_from_struct_high",
+        "struct_compression_pct", "struct_position",
+        "upper_wick_ratio", "lower_wick_ratio",
+        "body_to_struct_ratio"
     ]
 
 

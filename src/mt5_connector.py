@@ -391,14 +391,43 @@ class MT5Connector:
             # Wait for symbol data to be ready
             time.sleep(0.2)
 
-            # Fetch rates from MT5
-            rates = mt5.copy_rates_from_pos(symbol, tf, 0, count)
+            # --- NEW: Fetch rates in chunks to prevent "Invalid params" (-2) error ---
+            chunk_size = 50000
+            all_rates = []
+            bars_fetched = 0
+            
+            while bars_fetched < count:
+                current_fetch = min(chunk_size, count - bars_fetched)
+                
+                # Fetch backwards from our current offset
+                rates_chunk = mt5.copy_rates_from_pos(symbol, tf, bars_fetched, current_fetch)
+                
+                if rates_chunk is None or len(rates_chunk) == 0:
+                    break
+                
+                all_rates.append(rates_chunk)
+                bars_fetched += len(rates_chunk)
+                
+                # If MT5 returned less than requested, we've exhausted broker history
+                if len(rates_chunk) < current_fetch:
+                    break
 
-            if rates is not None and len(rates) > 0:
-                # Success!
+            if all_rates:
+                # Combine all chunks
+                rates = np.concatenate(all_rates)
+                
+                # Because we fetched backwards (newer chunks first, older chunks second),
+                # we must sort the combined array chronologically by time.
+                rates = np.sort(rates, order='time')
+                
                 if attempt > 0:
                     logger.info(f"Data fetched successfully on attempt {attempt + 1}")
                 break
+            # ------------------------------------------------------------------------
+
+            # Failed to get data
+            error = mt5.last_error()
+            error_code = error[0] if error else 0
 
             # Failed to get data
             error = mt5.last_error()

@@ -119,6 +119,14 @@ class MLV2FeatureEngineer:
         # Prepare H1 data for join
         df_h1_join = df_h1.select([c for c in h1_cols if c in df_h1.columns])
 
+        # ---> ADD THIS BLOCK TO PREVENT LOOKAHEAD BIAS <---
+        # Shift the H1 timestamp forward by 1 hour. 
+        # This forces the 10:00 H1 candle to only become available at 11:00.
+        df_h1_join = df_h1_join.with_columns([
+            (pl.col("time") + pl.duration(hours=1)).alias("time")
+        ])
+        # --------------------------------------------------
+
         # Join H1 to M15 using join_asof (backward looking, no lookahead)
         df_m15 = df_m15.join_asof(
             df_h1_join,

@@ -2,87 +2,87 @@
   "featureImportance": [
     {
       "name": "ob",
-      "importance": 0.1771
+      "importance": 0.185
     },
     {
-      "name": "ofi_pseudo",
-      "importance": 0.1761
+      "name": "ob_mitigated",
+      "importance": 0.1236
     },
     {
       "name": "ob_width_atr",
-      "importance": 0.0711
+      "importance": 0.106
     },
     {
-      "name": "ob_top",
-      "importance": 0.0275
-    },
-    {
-      "name": "ofi_divergence",
-      "importance": 0.0182
+      "name": "ofi_pseudo",
+      "importance": 0.0607
     },
     {
       "name": "ob_distance_atr",
-      "importance": 0.0151
+      "importance": 0.0174
     },
     {
-      "name": "ob_bottom",
-      "importance": 0.0111
+      "name": "ofi_divergence",
+      "importance": 0.014
     },
     {
       "name": "buy_volume",
-      "importance": 0.0102
-    },
-    {
-      "name": "fvg_mid",
-      "importance": 0.0098
-    },
-    {
-      "name": "h1_ema20",
-      "importance": 0.0093
-    },
-    {
-      "name": "sell_volume",
-      "importance": 0.0085
-    },
-    {
-      "name": "lower_low",
-      "importance": 0.0084
-    },
-    {
-      "name": "fvg_bottom",
-      "importance": 0.0083
-    },
-    {
-      "name": "last_swing_high",
-      "importance": 0.0082
-    },
-    {
-      "name": "weekday",
-      "importance": 0.0081
-    },
-    {
-      "name": "close_lag_3",
-      "importance": 0.0081
-    },
-    {
-      "name": "atr",
-      "importance": 0.008
-    },
-    {
-      "name": "close_lag_5",
-      "importance": 0.0079
-    },
-    {
-      "name": "close_lag_2",
-      "importance": 0.0079
+      "importance": 0.0112
     },
     {
       "name": "volume_ratio",
-      "importance": 0.0079
+      "importance": 0.0089
+    },
+    {
+      "name": "choch",
+      "importance": 0.0088
+    },
+    {
+      "name": "confluence_score",
+      "importance": 0.0087
+    },
+    {
+      "name": "lower_wick_ratio",
+      "importance": 0.0086
+    },
+    {
+      "name": "avg_normalized_range",
+      "importance": 0.0086
+    },
+    {
+      "name": "price_position",
+      "importance": 0.0086
+    },
+    {
+      "name": "h1_ema20_distance",
+      "importance": 0.0085
+    },
+    {
+      "name": "bb_percent_b",
+      "importance": 0.0085
+    },
+    {
+      "name": "struct_position",
+      "importance": 0.0083
+    },
+    {
+      "name": "ema_cross_bull",
+      "importance": 0.0083
+    },
+    {
+      "name": "fvg_mid",
+      "importance": 0.0083
+    },
+    {
+      "name": "market_structure",
+      "importance": 0.0083
+    },
+    {
+      "name": "high_volume",
+      "importance": 0.0082
     }
   ],
-  "trainAuc": 0.7801445211389129,
-  "testAuc": 0.5350140056022409,
+  "trainAuc": 0.7868467885455428,
+  "testAuc": 0.543671835917959,
   "sampleCount": 0,
-  "updatedAt": "2026-03-27T15:49:06.731490+08:00"
+  "updatedAt": "2026-03-30T08:37:02.317237+08:00"
 }
