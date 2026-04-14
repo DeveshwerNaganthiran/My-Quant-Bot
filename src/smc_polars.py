@@ -821,10 +821,17 @@ class SMCAnalyzer:
         if ((market_structure == 1 or has_bullish_break) and
             (has_bullish_fvg or has_bullish_ob)):
 
+            # FOR BULLISH (BUY)
             entry_zone, zone_type = get_valid_bullish_zone()
-            # FIX: ALWAYS use current_close as entry (no stale prices)
-            # FVG/OB zone is just for confirmation, not entry price
             entry = current_close
+
+            # ADD THIS FIX: Only allow entry if price has pulled back into/near the zone
+            if entry_zone is not None:
+                distance_to_zone = (entry - entry_zone) / entry
+                # If price is more than 0.15% away from the OrderBlock/FVG, block the trade (wait for pullback)
+                if distance_to_zone > 0.0015: 
+                    logger.debug("BUY Signal skipped: Price hasn't pulled back to FVG/OB yet.")
+                    return None
 
             # SL below swing low or ATR-based (use the FURTHER one to prevent whipsaw)
             swing_sl = last_swing_low if last_swing_low and last_swing_low < entry else None

@@ -247,15 +247,17 @@ class TradingConfig:
         - Smart management (no hard SL)
         """
         self.risk = RiskConfig(
-            risk_per_trade=0.5,        # REDUCE from 1.0 to 0.5 (cuts maximum risk ceiling in half)
-            max_daily_loss=2.0,        # REDUCE from 3.0 to 2.0 to protect daily equity
-            max_leverage=100,          
-            max_positions=3,           
+            risk_per_trade=15.0,       # High % needed for $1.12 account
+            max_daily_loss=1.0,       # Allow 50% daily loss for testing
+            max_leverage=1000,         # Adjust to your XM leverage
+            max_positions=5,           # Increased from 3 to 5
             max_lot_size=5.0,          
-            min_lot_size=0.01,         
-            lot_step=0.01,
+            min_lot_size=0.1,          # Micro account minimum lot
+            lot_step=0.1,              # Micro account lot step
+            use_equity_scaling=True,
+            equity_step=1.0,           # Every $1 in the account...
+            lot_per_step=0.1           # ...adds 0.1 lots
         )
-        # Focus on single high-liquidity pairs
         self.execution_timeframe = "M1"  # Scalping/day trading
         
     def _configure_medium_account(self):
@@ -268,7 +270,7 @@ class TradingConfig:
             max_daily_loss=2.0,        
             max_leverage=30,           
             max_positions=5,           
-            max_lot_size=5.0,  # <-- Change this to 5.0
+            max_lot_size=1.0,  # <-- Change this to 5.0
             min_lot_size=0.01,
             lot_step=0.01,
         )
@@ -329,8 +331,9 @@ class TradingConfig:
             sl_distance = abs(entry_price - stop_loss_price)
             if sl_distance == 0:
                 return self.risk.min_lot_size
-            pip_value_per_lot = 1.0 if "XAU" in self.symbol else 10.0
-            sl_pips = sl_distance / (0.1 if "XAU" in self.symbol else 0.0001)
+            # Change this:
+            pip_value_per_lot = 1.0 if "XAU" in self.symbol or "GOLD" in self.symbol.upper() else 10.0
+            sl_pips = sl_distance / (0.1 if "XAU" in self.symbol or "GOLD" in self.symbol.upper() else 0.0001)
             lot_size = risk_amount / (sl_pips * pip_value_per_lot) * 0.5
         
         # Round to nearest lot step

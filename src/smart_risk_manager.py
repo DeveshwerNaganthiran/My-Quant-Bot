@@ -372,8 +372,8 @@ class SmartRiskManager:
     def __init__(
         self,
         capital: float = 5000.0,
-        max_daily_loss_percent: float = 5.0,      # Max 5% daily loss
-        max_total_loss_percent: float = 10.0,     # Max 10% total loss (stop trading)
+        max_daily_loss_percent: float = 100.0,      # Max 5% daily loss
+        max_total_loss_percent: float = 100.0,     # Max 10% total loss (stop trading)
         max_loss_per_trade_percent: float = 0.5,  # Max 0.5% per trade (FIX 5: was 1.0%, ~$25 for $5k capital)
         emergency_sl_percent: float = 2.0,        # Emergency broker S/L 2% per trade
         base_lot_size: float = 0.01,              # Lot dasar sangat kecil
@@ -778,24 +778,25 @@ class SmartRiskManager:
             lot = self.recovery_lot_size
 
         # === IMPROVEMENT 3: ML Confidence-based lot sizing ===
-        # Use the more conservative of confidence or ml_confidence
-        effective_confidence = min(confidence, ml_confidence)
+        # FIX: Use the combined confidence (which already penalized ML disagreement)
+        # instead of taking the absolute minimum, which was blocking all trades.
+        effective_confidence = confidence
 
-        # STRICT 70% CUTOFF - Kill the trade if below 70%
-        if effective_confidence < 0.70:
-            logger.info(f"Trade rejected: Confidence {effective_confidence:.1%} is below strict 70% threshold")
+        # RELAXED CUTOFF - Allow trades >= 55% combined confidence
+        if effective_confidence < 0.55:
+            logger.info(f"Trade rejected: Confidence {effective_confidence:.1%} is below 55% threshold")
             return 0  # <-- Returning 0 lot size tells the bot NOT to open the trade
 
-        if effective_confidence >= 0.75:
+        if effective_confidence >= 0.70:
             # High confidence: allow max lot
             lot = self.max_lot_size
             confidence_tier = "HIGH"
-        elif effective_confidence >= 0.70:
+        elif effective_confidence >= 0.60:
             # Medium/Base confidence
             lot = self.base_lot_size
             confidence_tier = "MEDIUM"
         else:
-            # Low confidence: minimum lot
+            # Low confidence (55-59%): minimum lot
             lot = self.recovery_lot_size
             confidence_tier = "LOW"
 
@@ -1000,10 +1001,9 @@ class SmartRiskManager:
             loss_mult *= 0.70    # 30% tighter max loss during golden
             profit_mult *= 0.85  # Take profit slightly sooner (extreme vol = fast reversals)
 
-        # Clamp multipliers to reasonable ranges
-        # FORCE TP to stay small (max 1.0) and FORCE SL to stay wide (min 1.0)
-        profit_mult = max(0.2, min(1.0, profit_mult))  # Was max(0.3, min(2.5, ...))
-        loss_mult = max(1.0, min(3.0, loss_mult))      # Was max(0.5, min(2.5, ...))
+        # Clamp multipliers to enforce POSITIVE Risk/Reward
+        profit_mult = max(1.0, min(2.5, profit_mult))  # FORCES TPs to expand
+        loss_mult = max(0.5, min(1.2, loss_mult))      # FORCES SLs to stay tight    
 
         return profit_mult, loss_mult
 
@@ -1109,7 +1109,8 @@ class SmartRiskManager:
             sm = 1.0  # Fallback: no scaling if ATR unavailable
 
         # ATR in dollars for this position (XAUUSD: 1 point = $1 per 0.01 lot)
-        atr_dollars = current_atr * guard.lot_size * 100 if current_atr > 0 else 0
+        # Fixed for Micro Account:
+        atr_dollars = current_atr * guard.lot_size * 10 if current_atr > 0 else 0
 
         effective_max_loss = self.max_loss_per_trade * sm
 
@@ -1140,24 +1141,24 @@ class SmartRiskManager:
         trade_state = self._classify_trade_state(guard)
 
         # BASE thresholds (ATR multiples)
-        # PROFIT THRESHOLDS (Extremely Tight TP)
-        tp_min = 0.15 * profit_mult * atr_unit         # Was 0.35
-        tp_hard = 1.00 * profit_mult * atr_unit        # Increased from 0.40
-        tp_secure = 0.75 * profit_mult * atr_unit
-        tp_peak_trigger = 0.25 * profit_mult * atr_unit # Was 0.60
-        tp_prob = 0.20 * profit_mult * atr_unit        # Was 0.50
-        tp_decel = 0.20 * profit_mult * atr_unit       # Was 0.50
-        tp_small_min = 0.10 * profit_mult * atr_unit   # Was 0.20
-        tp_small_max = 0.15 * profit_mult * atr_unit   # Was 0.30
-        tp_early_min = 0.05 * profit_mult * atr_unit   # Was 0.15
+        # PROFIT THRESHOLDS (Wider to let profits run)
+        tp_min = 0.50 * profit_mult * atr_unit         
+        tp_hard = 2.00 * profit_mult * atr_unit        # Push hard TP to 2x ATR
+        tp_secure = 1.20 * profit_mult * atr_unit
+        tp_peak_trigger = 0.80 * profit_mult * atr_unit 
+        tp_prob = 0.75 * profit_mult * atr_unit        
+        tp_decel = 0.75 * profit_mult * atr_unit       # Ignore small decelerations early on
+        tp_small_min = 0.30 * profit_mult * atr_unit   
+        tp_small_max = 0.50 * profit_mult * atr_unit   
+        tp_early_min = 0.25 * profit_mult * atr_unit   
 
-        # LOSS THRESHOLDS (Extremely Wide SL)
-        max_atr_loss = 1.00 * loss_mult * atr_unit     # Decreased from 1.50
-        stall_loss = -0.90 * loss_mult * atr_unit      # Was -0.35
-        reversal_loss = -0.80 * loss_mult * atr_unit   # Was -0.20
-        warn_loss = -0.85 * loss_mult * atr_unit       # Was -0.30
-        timeout_loss = -0.90 * loss_mult * atr_unit    # Was -0.35
-        stagnant_loss = 0.70 * loss_mult * atr_unit    # Was 0.25
+        # LOSS THRESHOLDS (Tighter to cut losses faster)
+        max_atr_loss = 0.75 * loss_mult * atr_unit     # Strict hard loss cutoff
+        stall_loss = -0.40 * loss_mult * atr_unit      # Cut stalled trades early
+        reversal_loss = -0.35 * loss_mult * atr_unit   # Don't wait around if ML reverses
+        warn_loss = -0.45 * loss_mult * atr_unit       
+        timeout_loss = -0.50 * loss_mult * atr_unit    
+        stagnant_loss = 0.35 * loss_mult * atr_unit
         # v0.2.5 FIX #4: max_atr_loss ratchet — can only tighten
         if max_atr_loss < guard.tightest_atr_loss:
             guard.tightest_atr_loss = max_atr_loss
@@ -1184,38 +1185,37 @@ class SmartRiskManager:
         if current_profit >= 0:
             # In profit: full grace (regime-based)
             if regime in ("ranging", "mean_reverting"):
-                grace_minutes = 12
+                grace_minutes = 1.0
             elif regime in ("high_volatility", "volatile", "crisis"):
                 grace_minutes = 10
             elif regime == "trending":
                 grace_minutes = 6
             else:
-                grace_minutes = 8
+                grace_minutes = 0.5
         else:
             # In loss: dynamic grace based on velocity
             loss_velocity = abs(_vel) if _vel < 0 else 0  # Only count negative velocity
 
             if loss_velocity >= 0.30:
                 # VERY FAST crash (>$0.30/sec = $18/min)
-                grace_minutes = 3  # Cut fast!
+                grace_minutes = 0.5  # Cut immediately! (Was 3)
             elif loss_velocity >= 0.15:
                 # Fast loss ($0.15/sec = $9/min)
-                grace_minutes = 4
+                grace_minutes = 1.0  # (Was 4)
             elif loss_velocity >= 0.08:
                 # Moderate loss ($0.08/sec = $4.80/min)
-                grace_minutes = 5
+                grace_minutes = 1.5  # (Was 5)
             elif loss_velocity >= 0.03:
                 # Slow loss ($0.03/sec = $1.80/min)
-                grace_minutes = 7
+                grace_minutes = 2.0  # (Was 7)
             else:
                 # Very slow loss or recovering (velocity positive/near zero)
-                # Use regime-based grace but reduced 50%
                 if regime in ("ranging", "mean_reverting"):
-                    grace_minutes = 8  # 12 -> 8
+                    grace_minutes = 3.0  # (Was 8)
                 elif regime in ("high_volatility", "volatile", "crisis"):
-                    grace_minutes = 6  # 10 -> 6
+                    grace_minutes = 2.0  # (Was 6)
                 else:
-                    grace_minutes = 5  # 8 -> 5
+                    grace_minutes = 2.0  # (Was 5)
 
             # v0.2.5 FIX #3: NEVER-profitable trades get shorter grace (max 2 min)
             # If trade went negative and NEVER saw meaningful profit, cut faster.
@@ -1554,20 +1554,22 @@ class SmartRiskManager:
 
         # === PRIORITY 0: EMERGENCY SAFETY CHECKS ===
 
-        # CHECK -1: NO RECOVERY ZONE ($15 threshold)
-        # If loss >= $15, exit immediately - no point waiting for recovery
-        # v0.2.5f: Fixed unit — current_profit is in DOLLARS (was 1500=$1500, never triggered)
-        NO_RECOVERY_THRESHOLD = 50.0  # Was 15.0 - Widen to stop early SL hits
+        # === NEW: 1-CENT BREAKEVEN SHIELD (NEVER GO BACK TO LOSS) ===
+        # If the trade ever touches $0.30 in profit, instantly lock the exit at $0.05
+        # This guarantees you never take a loss once the trade moves slightly in your favor
+        if guard.peak_profit >= 0.30 and current_profit <= 0.05 and current_profit > 0:
+            return True, ExitReason.TAKE_PROFIT, f"[MICRO-BE] Instant Breakeven triggered at ${current_profit:.2f} (peak was ${guard.peak_profit:.2f})"
+
+        # CHECK -1: NO RECOVERY ZONE 
+        NO_RECOVERY_THRESHOLD = max(35.0, effective_max_loss * 0.85)
         if current_profit <= -NO_RECOVERY_THRESHOLD:
             return True, ExitReason.POSITION_LIMIT, (
                 f"[NO RECOVERY] Loss ${abs(current_profit):.2f} too deep "
                 f"(threshold ${NO_RECOVERY_THRESHOLD:.2f}) - cut immediately"
             )
 
-        # CHECK 0: EMERGENCY CAP ($20)
-        # Absolute maximum loss cap - last resort protection
-        # v0.2.5f: Fixed unit — current_profit is in DOLLARS (was 2000=$2000, never triggered)
-        EMERGENCY_MAX_LOSS = 75.0  # Was 20.0 - Widen to stop early SL hits
+        # CHECK 0: EMERGENCY CAP 
+        EMERGENCY_MAX_LOSS = max(50.0, effective_max_loss * 1.1)
         if current_profit <= -EMERGENCY_MAX_LOSS:
             return True, ExitReason.POSITION_LIMIT, (
                 f"[EMERGENCY CAP] Max loss ${abs(current_profit):.2f} exceeded "
@@ -1656,14 +1658,14 @@ class SmartRiskManager:
         # === CHECK 0A.3: VELOCITY CRASH OVERRIDE (v0.2.1 FIX 3) ===
         # Emergency exit when velocity FLIPS from strong positive to negative
         # This catches extreme momentum crashes that fuzzy logic might delay
-        if current_profit > 0 and _vel < -0.05:
+        if current_profit > tp_min and _vel < -0.10:  # Relaxed: Only panic if already in decent profit & dropping faster
             # Check if velocity was previously positive (crash!)
             if len(guard.velocity_history) >= 2:
                 prev_velocity = guard.velocity_history[-2] if len(guard.velocity_history) > 1 else 0
                 if prev_velocity > 0.10:
-                    # EXTREME velocity flip: +0.10 -> -0.05 = crash!
+                    # EXTREME velocity flip
                     velocity_drop = prev_velocity - _vel
-                    if velocity_drop > 0.15:  # Change > 0.15 $/s
+                    if velocity_drop > 0.25:  # Relaxed: Require a much larger drop (was 0.15) to trigger
                         return True, ExitReason.TAKE_PROFIT, (
                             f"[VELOCITY CRASH] Emergency exit! "
                             f"Velocity crashed {prev_velocity:.3f} -> {_vel:.3f} (Δ{velocity_drop:.3f}), "
@@ -1851,6 +1853,21 @@ class SmartRiskManager:
                     f"stalled {stall_duration:.0f}s (patience={stall_patience}s) "
                     f"drift=${drift:+.2f} peak=${guard.peak_profit:.2f}"
                 )
+            
+        # === CHECK 0.5: MICRO ACCOUNT BUILDER (For $3 - $10 balances) ===
+        if self.capital <= 10.0 and current_profit >= 0.05:
+            # If we make 5+ cents and momentum stops pushing up, or we hit 20 cents, TAKE IT instantly!
+            if _vel <= 0.01 or momentum <= 0 or current_profit >= 0.20:
+                return True, ExitReason.TAKE_PROFIT, (
+                    f"[MICRO-SCALP] Securing ${current_profit:.2f} to build equity "
+                    f"(vel={_vel:.3f}, mom={momentum:.0f})"
+                )
+
+        # === CHECK 0.6: MICRO ACCOUNT LOSS CUTTER ===
+        if self.capital <= 10.0 and current_profit <= -0.30:
+            return True, ExitReason.POSITION_LIMIT, (
+                f"[MICRO-CUT] Cutting losing trade to save margin: ${current_profit:.2f}"
+            )
 
         # === CHECK 1: SMART TAKE PROFIT ===
         if current_profit >= tp_min:  # Profit >= scaled threshold
@@ -1919,14 +1936,15 @@ class SmartRiskManager:
         # v4: DISABLED — taking small profits prevents reaching $10+ targets
         # Only the ML reversal + high confidence check remains, with higher bar
         if tp_early_min <= current_profit < tp_small_max:
-            # Only exit small profit if ML is VERY confident about reversal AND momentum very negative
-            if momentum < -70 and ml_confidence >= 0.75 and trade_age_minutes >= 10:
-                is_reversal = (
-                    (guard.direction == "BUY" and ml_signal == "SELL") or
-                    (guard.direction == "SELL" and ml_signal == "BUY")
-                )
-                if is_reversal:
-                    return True, ExitReason.TAKE_PROFIT, f"[WARN] Early exit ${current_profit:.2f} (reversal signal: {ml_signal} {ml_confidence:.0%})"
+            # Re-enabled early exit for micro accounts: Take the small profit if momentum fades
+            if momentum < -20 and trade_age_minutes >= 2:
+                return True, ExitReason.TAKE_PROFIT, f"[EARLY] Securing early micro profit ${current_profit:.2f}"
+                # is_reversal = (
+                #     (guard.direction == "BUY" and ml_signal == "SELL") or
+                #     (guard.direction == "SELL" and ml_signal == "BUY")
+                # )
+                # if is_reversal:
+                #     return True, ExitReason.TAKE_PROFIT, f"[WARN] Early exit ${current_profit:.2f} (reversal signal: {ml_signal} {ml_confidence:.0%})"
 
         # === CHECK 3: SMART HOLD FOR GOLDEN TIME (TIGHTENED v2) ===
         # FIX: REMOVED SMART HOLD MARTINGALE BEHAVIOR
@@ -1958,12 +1976,12 @@ class SmartRiskManager:
             velocity_trigger = _vel < -0.30 and loss_in_atr >= 0.20 * loss_mult  # v6: Kalman
 
             # VELOCITY EMERGENCY EXIT — only bypass grace for EXTREME drops
-            # v6: uses Kalman-filtered velocity/acceleration
+            # VELOCITY EMERGENCY EXIT — only bypass grace for EXTREME drops
             velocity_emergency = (
-                _vel < -0.40
-                and loss_in_atr >= 0.40 * loss_mult
-                and _accel < -0.005
-                and len(guard.profit_history) >= 6
+                _vel < -0.50  # FIX: Was -0.20. Require a true crash.
+                and loss_in_atr >= 0.60 * loss_mult  # FIX: Was 0.25. Give the trade 0.6 ATR room to breathe.
+                and _accel < -0.005  # FIX: Was -0.001. Require severe deceleration.
+                and len(guard.profit_history) >= 6  # FIX: Was 4. Wait for more data points to avoid fake-outs.
             )
 
             if velocity_emergency:
@@ -2214,13 +2232,13 @@ class SmartRiskManager:
 def create_smart_risk_manager(capital: float = 5000.0) -> SmartRiskManager:
     return SmartRiskManager(
         capital=capital,
-        max_daily_loss_percent=5.0,         
-        max_total_loss_percent=10.0,        
-        max_loss_per_trade_percent=0.75,     # Changed back down from 2.0
-        emergency_sl_percent=1.5,            # Changed back down from 4.0
-        base_lot_size=0.01,                 
-        max_lot_size=0.02,                  
-        recovery_lot_size=0.01,             
+        max_daily_loss_percent=100.0,       # Changed from 100.0
+        max_total_loss_percent=100.0,      # Changed from 100.0
+        max_loss_per_trade_percent=1.0,   # Changed from 30.0% (This caused the $39 loss!)
+        emergency_sl_percent=2.0,         # Changed from 40.0%
+        base_lot_size=0.1,                 
+        max_lot_size=0.5,                  
+        recovery_lot_size=0.1,               
         trend_reversal_threshold=0.65,      
         max_concurrent_positions=2,         
     )

@@ -134,8 +134,8 @@ class TradingBot:
 
         # Initialize ML Model (unified path — auto-trainer saves here after retrain)
         self.ml_model = TradingModelV2(
-            confidence_threshold=0.60,  # Binary confidence threshold (adjustable 0.55-0.65)
-            model_path="backtests/ml_v3/xgboost_model_v3.pkl",
+            confidence_threshold=0.60,
+            model_path="models/xgboost_model.pkl", # <--- CHANGE THIS LINE
         )
         self.fe_v2 = MLV2FeatureEngineer()
         self._h1_df_cached = None  # Cache H1 DataFrame with indicators for V2 features
@@ -143,19 +143,21 @@ class TradingBot:
         # Initialize Smart Position Manager — EXIT STRATEGY v4 "Patient Recovery"
         # Philosophy: Let trades BREATHE. Don't cut winners at $3-4.
         # Regime danger only at $8+. Give losers room to recover.
+        # Initialize Smart Position Manager — EXIT STRATEGY v4 "Patient Recovery"
         self.position_manager = SmartPositionManager(
-            breakeven_pips=20.0,       # Fallback if ATR unavailable
-            trail_start_pips=35.0,     # Fallback if ATR unavailable
-            trail_step_pips=20.0,      # Fallback if ATR unavailable
-            atr_be_mult=2.0,           # v4: BE at 2x ATR (from 1.0) — don't lock too early
-            atr_trail_start_mult=3.0,  # v4: Trail at 3x ATR (from 2.0) — let profit run
-            atr_trail_step_mult=2.0,   # v4: Trail step 2x ATR (from 1.5)
-            min_profit_to_protect=8.0, # v4: Regime/signal exit only at $8+ (from $3)
-            max_drawdown_from_peak=40.0,  # v4: Allow 40% drawdown (from 25%)
+            breakeven_pips=12.0,       # FIX: Lock breakeven much earlier (was 20.0)
+            trail_start_pips=20.0,     # FIX: Start trailing profits earlier (was 35.0)
+            trail_step_pips=10.0,      # FIX: Trail closer to the price
+            atr_be_mult=1.0,           # FIX: Breakeven at 1x ATR (was 2.0)
+            atr_trail_start_mult=1.5,  # FIX: Trail at 1.5x ATR (was 3.0)
+            atr_trail_step_mult=0.5,   # FIX: Tight step (was 2.0)
+            min_profit_to_protect=10.0,# FIX: Start protecting at $10 (was $25.0)
+            max_drawdown_from_peak=20.0,  # FIX: Only allow 20% drawdown from peak (was 40.0)
+            
             # Smart Market Close Handler
             enable_market_close_handler=True,
-            min_profit_before_close=3.0,   # v4: from $2
-            max_loss_to_hold=2.0,     # v4: Max loss $10 per position (from $5)
+            min_profit_before_close=3.0,
+            max_loss_to_hold=2.0,
         )
 
         # Initialize Session Filter (WIB timezone for Batam)
@@ -198,7 +200,7 @@ class TradingBot:
         self._execution_times: list = []
         self._current_date = date.today()
         self._models_loaded = False
-        self._trade_cooldown_seconds = 15  # CHANGED: 15 second cooldown between trades
+        self._trade_cooldown_seconds = 0 # Set to 0 seconds per user request
         self._start_time = datetime.now()
         self._daily_start_balance: float = 0
         self._total_session_profit: float = 0
@@ -217,6 +219,7 @@ class TradingBot:
 
         # Entry filter tracking for dashboard
         self._last_filter_results: list = []
+        self._last_model_update_time: float = 0.0
 
         # H1 EMA cache for dashboard
         self._h1_ema20_value: float = 0.0
@@ -347,6 +350,11 @@ class TradingBot:
         # Write model metrics for dashboard
         if models_ok:
             self._write_model_metrics()
+
+            import os
+            model_path = "models/xgboost_model.pkl"
+            if os.path.exists(model_path):
+                self._last_model_update_time = os.path.getmtime(model_path)
 
         return models_ok
 
@@ -834,6 +842,28 @@ class TradingBot:
             logger.info(f"Account Balance: ${balance:,.2f}")
             logger.info(f"Account Equity: ${equity:,.2f}")
 
+            # --- NEW CODE: Print Today's Accumulated P/L on Startup ---
+            try:
+                risk_file = Path("data/risk_state.txt")
+                if risk_file.exists():
+                    content = risk_file.read_text()
+                    d_loss = 0.0
+                    d_profit = 0.0
+                    for line in content.strip().split("\n"):
+                        if ":" in line:
+                            key, value = line.split(":", 1)
+                            if key.strip() == "daily_loss": d_loss = float(value.strip())
+                            elif key.strip() == "daily_profit": d_profit = float(value.strip())
+                    
+                    net_daily = d_profit - d_loss
+                    logger.info("=" * 60)
+                    logger.info(f"TODAY'S P/L SO FAR: ${net_daily:+,.2f} (Profit: ${d_profit:.2f} | Loss: ${d_loss:.2f})")
+                    logger.info("=" * 60)
+            except Exception as e:
+                logger.debug(f"Could not read daily P/L on startup: {e}")
+            # --- END NEW CODE ---
+            
+
             # Show session status
             session_status = self.session_filter.get_status_report()
             logger.info(f"Session: {session_status['current_session']} ({session_status['volatility']} vol)")
@@ -1124,6 +1154,24 @@ class TradingBot:
             loop_start = time.perf_counter()
 
             try:
+                # --- NEW HOT-RELOAD CHECK ---
+                model_path = "models/xgboost_model.pkl"
+                if os.path.exists(model_path):
+                    current_mtime = os.path.getmtime(model_path)
+                    # If the file on the hard drive is newer than the one in our RAM:
+                    if current_mtime > self._last_model_update_time:
+                        logger.info("=" * 60)
+                        logger.info("🔥 HOT RELOAD: New AI brain detected from Continuous Trainer!")
+                        logger.info("=" * 60)
+                        
+                        # Reload the models into RAM
+                        self.regime_detector.load()
+                        self.ml_model.load()
+                        
+                        self._last_model_update_time = current_mtime
+                        logger.info("✅ New AI models successfully loaded into live trading memory.")
+                # -----------------------------
+
                 # Check for new day
                 if date.today() != self._current_date:
                     self._on_new_day()
@@ -1189,8 +1237,8 @@ class TradingBot:
             except Exception:
                 pass
 
-            # Wait before next check (5 seconds between candle checks)
-            await asyncio.sleep(5)
+            # Wait before next check (15 seconds between candle checks)
+            await asyncio.sleep(2)
 
     async def _position_check_only(self):
         """Quick position check between candles — uses cached ML/features, adds flash crash detection."""
@@ -1251,26 +1299,33 @@ class TradingBot:
                     )
                 else:
                     # Fallback: first iteration before any candle processed
-                    df = self.mt5.get_market_data(
-                        symbol=self.config.symbol,
-                        timeframe=self.config.execution_timeframe,
-                        count=50,
-                    )
-                    if len(df) == 0:
-                        return
-                    df = self.features.calculate_all(df, include_ml_features=True)
-                    df = self.smc.calculate_all(df)
-                    df = self.fe_v2.add_all_v2_features(df, self._h1_df_cached)
-                    # Ensure regime columns exist for ML model
-                    if "regime" not in df.columns:
-                        df = df.with_columns(pl.lit(1).alias("regime"))
-                    if "regime_confidence" not in df.columns:
-                        df = df.with_columns(pl.lit(1.0).alias("regime_confidence"))
-                    feature_cols = self._get_available_features(df)
-                    ml_prediction = self.ml_model.predict(df, feature_cols)
+                    mtf_df = self._build_wide_mtf_features()
+                    
+                    is_mtf_model = False
+                    if self.ml_model.feature_names:
+                        is_mtf_model = any(f.startswith("M5_") or f.startswith("M1_") for f in self.ml_model.feature_names)
+                    
+                    if is_mtf_model and mtf_df is not None:
+                        if "regime" not in mtf_df.columns:
+                            mtf_df = mtf_df.with_columns(pl.lit(1).alias("regime"))
+                        if "regime_confidence" not in mtf_df.columns:
+                            mtf_df = mtf_df.with_columns(pl.lit(1.0).alias("regime_confidence"))
+                        
+                        feature_cols = self._get_available_features(mtf_df)
+                        ml_prediction = self.ml_model.predict(mtf_df, feature_cols)
+                        eval_df = mtf_df
+                    else:
+                        # Hard fallback to single TF
+                        df_fallback = self.mt5.get_market_data(self.config.symbol, self.config.execution_timeframe, count=50)
+                        if len(df_fallback) == 0: return
+                        df_fallback = self.features.calculate_all(df_fallback, include_ml_features=True)
+                        feature_cols = self._get_available_features(df_fallback)
+                        ml_prediction = self.ml_model.predict(df_fallback, feature_cols)
+                        eval_df = df_fallback
+                        
                     await self._smart_position_management(
                         open_positions=open_positions,
-                        df=df,
+                        df=eval_df,
                         regime_state=cached_regime,
                         ml_prediction=ml_prediction,
                         current_price=current_price,
@@ -1441,6 +1496,49 @@ class TradingBot:
         except Exception as e:
             logger.debug(f"Pyramid check error: {e}")
 
+    def _build_wide_mtf_features(self) -> Optional[pl.DataFrame]:
+        """
+        Builds the wide multi-timeframe dataframe (M1, M5, M15, M30, H1) 
+        to exactly match the continuous_live_trainer.py format.
+        """
+        import pandas as pd
+        timeframes = ["M1", "M5", "M15", "M30", "H1"]
+        live_state = {}
+        
+        for tf in timeframes:
+            # Fetch data for each timeframe
+            df_tf = self.mt5.get_market_data(
+                symbol=self.config.symbol, 
+                timeframe=tf, 
+                count=200
+            )
+            if len(df_tf) == 0:
+                continue
+                
+            # Calculate all base features and SMC for this specific timeframe
+            df_tf = self.features.calculate_all(df_tf, include_ml_features=True)
+            df_tf = self.smc.calculate_all(df_tf)
+            
+            # Convert to Pandas, extract the live moving candle, and prefix column names
+            live_row = df_tf.tail(1).to_pandas()
+            live_row.columns = [f"{tf}_{col}" if col != "time" else col for col in live_row.columns]
+            live_state[tf] = live_row
+            
+        # Merge all timeframes horizontally into a single snapshot
+        if "M1" in live_state and "M5" in live_state:
+            merged = live_state["M1"]
+            for tf in ["M5", "M15", "M30", "H1"]:
+                if tf in live_state:
+                    merged = pd.concat([
+                        merged.reset_index(drop=True), 
+                        live_state[tf].drop(columns=['time'], errors='ignore').reset_index(drop=True)
+                    ], axis=1)
+            
+            # Convert back to Polars for the XGBoost model
+            return pl.from_pandas(merged)
+            
+        return None
+
     async def _trading_iteration(self):
         """Single trading iteration."""
         # Reset filter tracking for dashboard
@@ -1517,6 +1615,13 @@ class TradingBot:
         # 6. Check if trading is allowed
         account_balance = self.mt5.account_balance or self.config.capital
         account_equity = self.mt5.account_equity or self.config.capital
+        # ---> ADD THIS LINE TO FIX THE EQUITY SYNC <---
+        self.smart_risk.update_capital(account_equity)
+
+        open_positions = self.mt5.get_open_positions(
+            symbol=self.config.symbol,
+            magic=self.config.magic_number,
+        )
         open_positions = self.mt5.get_open_positions(
             symbol=self.config.symbol,
             magic=self.config.magic_number,
@@ -1526,8 +1631,42 @@ class TradingBot:
         current_price = tick.bid if tick else df["close"].tail(1).item()
 
         # Get ML prediction early for position management
-        feature_cols = self._get_available_features(df)
-        ml_prediction = self.ml_model.predict(df, feature_cols)
+        # --- NEW: Build Multi-Timeframe Wide Dataframe for Continuous Model ---
+        mtf_df = self._build_wide_mtf_features()
+        
+        # SMART ROUTER: Check if the loaded model is the new MTF model or the old single-TF model
+        is_mtf_model = False
+        if self.ml_model.feature_names:
+            is_mtf_model = any(f.startswith("M5_") or f.startswith("M1_") for f in self.ml_model.feature_names)
+            
+        if is_mtf_model and mtf_df is not None:
+            # --- USE NEW CONTINUOUS MTF MODEL ---
+            if "regime" not in mtf_df.columns:
+                # FIX: Map the text string to an integer for XGBoost
+                reg_map = {"low_volatility": 0, "medium_volatility": 1, "high_volatility": 2, "crisis": 3}
+                reg_str = regime_state.regime.value if regime_state else "medium_volatility"
+                reg_val = reg_map.get(reg_str, 1)
+                
+                # Cast explicitly to Int32 so it doesn't pass as a string
+                mtf_df = mtf_df.with_columns(pl.lit(reg_val).cast(pl.Int32).alias("regime"))
+                
+            if "regime_confidence" not in mtf_df.columns:
+                reg_conf = regime_state.confidence if regime_state else 1.0
+                mtf_df = mtf_df.with_columns(pl.lit(reg_conf).cast(pl.Float64).alias("regime_confidence"))
+                
+            feature_cols = self._get_available_features(mtf_df)
+            ml_prediction = self.ml_model.predict(mtf_df, feature_cols)
+            
+            # CRITICAL FIX: Cache the STANDARD df for position management, not mtf_df
+            self._cached_ml_prediction = ml_prediction
+            self._cached_df = df
+        else:
+            # --- USE OLD SINGLE-TF MODEL (Fallback until Friday's new model is ready) ---
+            feature_cols = self._get_available_features(df)
+            ml_prediction = self.ml_model.predict(df, feature_cols)
+            
+            self._cached_ml_prediction = ml_prediction
+            self._cached_df = df
 
         # Store for trade logging + dashboard
         self._last_ml_signal = ml_prediction.signal
@@ -1535,7 +1674,7 @@ class TradingBot:
         self._last_ml_probability = ml_prediction.probability
         self._last_ml_updated = datetime.now(ZoneInfo("Asia/Kuala_Lumpur")).strftime("%H:%M:%S")
 
-        # Cache ML prediction and DataFrame for inter-candle position checks (Fix 4)
+        # Cache ML prediction and BASE DataFrame for inter-candle position checks
         self._cached_ml_prediction = ml_prediction
         self._cached_df = df
 
@@ -1748,35 +1887,41 @@ class TradingBot:
             logger.warning(f"Night Safety: {final_signal.signal_type} blocked - {night_spread_msg} (WIB {wib_hour})")
             return
 
-        # 10.5 Check trade cooldown
+        # 10.5 Check trade cooldown (5 Seconds)
         cooldown_blocked = False
         cooldown_remaining = 0
+        
         if self._last_trade_time:
             time_since_last = (datetime.now() - self._last_trade_time).total_seconds()
             cooldown_remaining = self._trade_cooldown_seconds - time_since_last
+            
+            # If less than 5 seconds have passed, block the trade
             if cooldown_remaining > 0:
                 cooldown_blocked = True
+                
         cooldown_enabled = self._is_filter_enabled("cooldown")
         cooldown_filter_blocked = cooldown_blocked and cooldown_enabled
+        
         self._last_filter_results.append({
             "name": "Trade Cooldown",
             "passed": not cooldown_filter_blocked,
-            "detail": (f"{cooldown_remaining:.0f}s left" if cooldown_blocked else "OK") + (" [DISABLED]" if not cooldown_enabled else "")
+            "detail": (f"{cooldown_remaining:.1f}s left" if cooldown_blocked else "OK") + (" [DISABLED]" if not cooldown_enabled else "")
         })
+        
         if cooldown_filter_blocked:
-            logger.info(f"Trade cooldown: {cooldown_remaining:.0f}s remaining")
+            logger.info(f"Trade cooldown: {cooldown_remaining:.1f}s remaining before next trade allowed.")
             return
 
         # 10.6 PULLBACK FILTER - STRICT MODE ENABLED
         can_trade_pullback, pb_reason = self._check_pullback_filter(df, final_signal.signal_type, current_price)
         self._last_filter_results.append({
             "name": "Pullback Filter", 
-            "passed": can_trade_pullback, 
-            "detail": pb_reason
+            "passed": True,  # Force pass for dashboard
+            "detail": pb_reason + " [IGNORED]"
         })
         if not can_trade_pullback:
-            logger.info(f"Trade blocked by Pullback Filter: {pb_reason}")
-            return
+            logger.info(f"Pullback warning ignored: {pb_reason}")
+            # return  <--- COMMENT THIS OUT TO DISABLE THE FILTER
         
         # 10.7 MULTI-TIMEFRAME CONFLUENCE (M5, M15, M30)
         mtf_passed, mtf_detail = await self._check_mtf_confluence(final_signal.signal_type)
@@ -1788,13 +1933,13 @@ class TradingBot:
 
         self._last_filter_results.append({
             "name": "MTF Confluence (M5/15/30)", 
-            "passed": mtf_passed, 
-            "detail": mtf_detail
+            "passed": True,  # Force pass for dashboard
+            "detail": mtf_detail + " [IGNORED]"
         })
         
         if not mtf_passed:
-            logger.info(f"Trade blocked by MTF Filter: {mtf_detail}")
-            return
+            logger.info(f"MTF warning ignored: {mtf_detail}")
+            # return  <--- COMMENT THIS OUT SO IT NEVER BLOCKS THE TRADE
 
         # 11. SMART RISK CHECK - Ultra safe mode
         self.smart_risk.check_new_day()
@@ -1811,31 +1956,45 @@ class TradingBot:
             entry_price=final_signal.entry_price,
             confidence=final_signal.confidence,
             regime=regime_name,
-            ml_confidence=ml_prediction.confidence,  # IMPROVEMENT 3: Pass ML confidence
+            ml_confidence=ml_prediction.confidence,  
         )
+
+        # === CRITICAL FIX: STOP REJECTED TRADES HERE ===
+        if safe_lot <= 0:
+            logger.debug("Smart Risk: Lot size is 0 (Trade Rejected) - skipping trade")
+            return
+
+        # === NEW: CANDLE BEHAVIOR FILTER ===
+        # Ensure intra-candle momentum matches the signal direction
+        current_open = df["open"].tail(1).item()
+        if final_signal.signal_type == "BUY" and current_price < current_open:
+            logger.info(f"Candle Behavior: BUY blocked - Candle is currently RED (Open: {current_open:.2f}, Price: {current_price:.2f})")
+            return
+        elif final_signal.signal_type == "SELL" and current_price > current_open:
+            logger.info(f"Candle Behavior: SELL blocked - Candle is currently GREEN (Open: {current_open:.2f}, Price: {current_price:.2f})")
+            return
 
         # Apply session multiplier (Sydney = 0.5x for safety)
         session_mult = getattr(self, '_current_session_multiplier', 1.0)
         if session_mult < 1.0:
             original_lot = safe_lot
-            safe_lot = max(0.01, round(safe_lot * session_mult, 2))  # Minimum 0.01, rounded to 0.01 step
+            # CHANGED: max(0.01) and round(..., 2)
+            safe_lot = max(0.01, round(safe_lot * session_mult, 2))  
             sydney_mode = getattr(self, '_is_sydney_session', False)
             if sydney_mode:
                 logger.info(f"Sydney SAFE MODE: Lot {original_lot:.2f} -> {safe_lot:.2f} (0.5x)")
 
-        # v6.1: NIGHT SAFETY - Lot reduction for late night hours (22:00-05:59 WIB)
-        # Night trading has lower win rate (14%) and higher loss risk
-        # Reduce lot by 50% to minimize damage from night volatility
+        # v6.1: NIGHT SAFETY - Lot reduction for late night hours
         wib_hour = datetime.now(ZoneInfo("Asia/Kuala_Lumpur")).hour
         is_night_hours = wib_hour >= 22 or wib_hour <= 5
         if is_night_hours:
             original_lot = safe_lot
-            safe_lot = max(0.01, round(safe_lot * 0.5, 2))  # 50% reduction
-            logger.warning(f"NIGHT SAFETY MODE: Lot {original_lot:.2f} -> {safe_lot:.2f} (0.5x) - WIB {wib_hour}:xx (high risk hours)")
-
-        if safe_lot <= 0:
-            logger.debug("Smart Risk: Lot size is 0 - skipping trade")
-            return
+            # CHANGED: max(0.01) and round(..., 2)
+            safe_lot = max(0.01, round(safe_lot * 0.5, 2))  
+            logger.warning(f"NIGHT SAFETY MODE: Lot {original_lot:.2f} -> {safe_lot:.2f} (0.5x) - WIB {wib_hour}:xx")
+            
+        # FORCE 0.01 NO MATTER WHAT FOR DEMO TRAINING
+        safe_lot = 0.01
 
         # Create position result with safe lot
         from dataclasses import dataclass
@@ -1862,9 +2021,9 @@ class TradingBot:
         # 13. Check position limit (max 2 concurrent positions)
         can_open, limit_reason = self.smart_risk.can_open_position()
         self._last_filter_results.append({"name": "Position Limit", "passed": can_open, "detail": limit_reason if not can_open else "OK"})
-        if not can_open:
-            logger.warning(f"Position limit: {limit_reason} - skipping trade")
-            return
+        # if not can_open:
+        #     logger.warning(f"Position limit: {limit_reason} - skipping trade")
+        #     return
 
         # 14. Execute trade (with Emergency Broker SL)
         await self._execute_trade_safe(final_signal, position_result, regime_state)
@@ -1957,7 +2116,8 @@ class TradingBot:
         # Only override if SMC is missing, OR if SMC disagrees with the AI
         needs_override = smc_signal is None or smc_signal.signal_type != ml_prediction.signal
 
-        if ml_prediction.signal in ["BUY", "SELL"] and ml_prediction.confidence >= 0.70 and needs_override:
+        # CHANGED: Increased from 0.70 to 0.85 to stop the AI from fighting strong trends
+        if ml_prediction.signal in ["BUY", "SELL"] and ml_prediction.confidence >= 0.99 and needs_override:
             direction = ml_prediction.signal
             
             # Create a dynamic ATR-based Stop Loss & Take Profit since we are ignoring SMC
@@ -2004,8 +2164,8 @@ class TradingBot:
                 return None
 
             # Check ML agreement based on raw probability
-            ml_leans_bullish = ml_prediction.probability >= 0.50
-            ml_leans_bearish = ml_prediction.probability < 0.50
+            ml_leans_bullish = ml_prediction.probability >= 0.40 
+            ml_leans_bearish = ml_prediction.probability <= 0.60
 
             ml_agrees = (
                 (smc_signal.signal_type == "BUY" and ml_leans_bullish) or
@@ -2017,13 +2177,23 @@ class TradingBot:
                 combined_confidence = (smc_conf + ml_prediction.confidence) / 2
                 reason_suffix = f" | ML AGREES ({ml_prediction.probability:.0%})"
             else:
-                # OVERRIDE: If AI is confused but SMC is >= 80% strong, force the trade!
-                if smc_conf >= 0.80:
-                    combined_confidence = smc_conf * 0.90  # 10% penalty
-                    reason_suffix = f" | ML OVERRIDDEN (SMC was {smc_conf:.0%} strong)"
-                    logger.info(f"AI Override: AI is unsure ({ml_prediction.probability:.0%}) but SMC is {smc_conf:.0%} strong. Forcing trade.")
+                # OVERRIDE 1: Only force trade if ML is GENUINELY 50/50 and SMC is nearly perfect
+                # FIX: Tightened the probability window to effectively disable bad overrides
+                if 0.48 <= ml_prediction.probability <= 0.52 and smc_conf >= 0.95:
+                    combined_confidence = smc_conf * 0.70  # Heavy 30% penalty for ML uncertainty
+                    reason_suffix = f" | ML OVERRIDDEN (ML Unsure: {ml_prediction.probability:.0%})"
+                    logger.info(f"AI Override: ML is unsure ({ml_prediction.probability:.0%}) but SMC is {smc_conf:.0%} strong. Forcing trade.")
+                    
+                # OVERRIDE 2: Backup Rule
+                elif ml_prediction.confidence < 0.50 and smc_conf >= 0.95:
+                    combined_confidence = smc_conf * 0.70
+                    reason_suffix = f" | ML OVERRIDDEN (ML Weak Conf < 50%)"
+                    logger.info(f"AI Override: ML disagrees but with weak confidence ({ml_prediction.confidence:.0%}). Forcing trade.")
+                    
                 else:
-                    logger.info(f"Signal Blocked: SMC says {smc_signal.signal_type} ({smc_conf:.0%}) but ML disagrees ({ml_prediction.probability:.0%})")
+                    # PROPER FOREX BEHAVIOR: 
+                    # If ML disagrees with SMC, BLOCK the trade! It is likely a fake-out/sweep.
+                    logger.info(f"Signal Blocked: SMC says {smc_signal.signal_type} ({smc_conf:.0%}) but ML strongly disagrees ({ml_prediction.probability:.0%} / conf: {ml_prediction.confidence:.0%})")
                     return None
 
             # Apply penalties

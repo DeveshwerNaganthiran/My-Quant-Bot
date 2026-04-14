@@ -58,3 +58,5 @@ pydantic>=2.6.0
 tzdata
 pytz
 scikit-fuzzy
+pandas
+schedule

@@ -269,13 +269,13 @@ class SmartPositionManager:
 
     def __init__(
         self,
-        breakeven_pips: float = 10.0,      # Was 15.0
-        trail_start_pips: float = 15.0,    # Was 25.0
-        trail_step_pips: float = 5.0,      # Was 10.0
-        min_profit_to_protect: float = 30.0,  # Was 50.0
-        max_drawdown_from_peak: float = 30.0,  
+        breakeven_pips: float = 2.0,       # Changed from 10.0: Trigger BE after just 2 pips
+        trail_start_pips: float = 5.0,     # Changed from 15.0: Start trailing instantly
+        trail_step_pips: float = 2.0,      # Changed from 5.0: Trail very tightly
+        min_profit_to_protect: float = 2.0,# Changed from 30.0: Protect tiny profits
+        max_drawdown_from_peak: float = 10.0,  
         # ATR-adaptive exit multipliers
-        atr_be_mult: float = 1.0,          # Was 2.0 (Breakeven triggers at 1.0 ATR)
+        atr_be_mult: float = 0.2,          # Changed from 1.0: Trigger BE at 0.2 ATR          # Was 2.0 (Breakeven triggers at 1.0 ATR)
         atr_trail_start_mult: float = 2.0, # Was 4.0 (Trail starts at 2.0 ATR)
         atr_trail_step_mult: float = 1.5,  # Was 3.0
         # Market Close Handler settings

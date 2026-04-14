@@ -62,11 +62,7 @@ class FeatureEngineer:
         return df
     
     def calculate_patterns(self, df: pl.DataFrame, lookback: int = 20) -> pl.DataFrame:
-        """
-        Calculate continuous structural market features.
-        Instead of rigidly defining "Perfect W" or "Perfect M", we give XGBoost
-        the structural coordinates so it can learn "Crooked" real-world patterns.
-        """
+        """Calculate continuous structural market features with clipping."""
         # 1. Macro Structure Limits
         df = df.with_columns([
             pl.col("high").rolling_max(window_size=lookback).alias("struct_high"),
@@ -76,27 +72,23 @@ class FeatureEngineer:
 
         # 2. Continuous "Crooked" Pattern Features
         df = df.with_columns([
-            # A. Depth & Proximity (Allows AI to see crooked Double Tops/Bottoms)
-            # If price is near struct_low, AI knows we are testing a bottom.
-            ((pl.col("close") - pl.col("struct_low")) / (pl.col("struct_low") + 1e-9) * 100).alias("dist_from_struct_low"),
-            ((pl.col("struct_high") - pl.col("close")) / (pl.col("close") + 1e-9) * 100).alias("dist_from_struct_high"),
+            # Clip structure distances to a max of +/- 5%
+            (((pl.col("close") - pl.col("struct_low")) / (pl.col("struct_low") + 1e-9) * 100)
+             .clip(lower_bound=-5.0, upper_bound=5.0)).alias("dist_from_struct_low"),
+            (((pl.col("struct_high") - pl.col("close")) / (pl.col("close") + 1e-9) * 100)
+             .clip(lower_bound=-5.0, upper_bound=5.0)).alias("dist_from_struct_high"),
             
-            # B. Range Compression (Allows AI to see messy Triangles/Wedges)
-            # How tight is the current structure? (0.1 = very tight/sideways, 2.0 = massive volatility)
-            ((pl.col("struct_high") - pl.col("struct_low")) / pl.col("struct_mean") * 100).alias("struct_compression_pct"),
+            # Clip compression to a reasonable bound (0 to 10%)
+            (((pl.col("struct_high") - pl.col("struct_low")) / pl.col("struct_mean") * 100)
+             .clip(lower_bound=0.0, upper_bound=10.0)).alias("struct_compression_pct"),
             
-            # C. Position in Range (0.0 to 1.0)
-            # 0.0 = exactly at support, 1.0 = exactly at resistance, 0.5 = middle of chop
             ((pl.col("close") - pl.col("struct_low")) / (pl.col("struct_high") - pl.col("struct_low") + 1e-9)).alias("struct_position"),
         ])
 
-        # 3. Liquidity Sweep Metrics (Allows AI to see crooked Pin Bars/Hammers)
+        # 3. Liquidity Sweep Metrics
         df = df.with_columns([
-            # Wick ratio: How much of the candle is just a wick? (High values = aggressive rejections)
             ((pl.col("high") - pl.col("close")).abs() / (pl.col("high") - pl.col("low") + 1e-9)).alias("upper_wick_ratio"),
             ((pl.col("close") - pl.col("low")).abs() / (pl.col("high") - pl.col("low") + 1e-9)).alias("lower_wick_ratio"),
-            
-            # Candle body size relative to the lookback structure (Identifies violent breakouts)
             ((pl.col("close") - pl.col("open")).abs() / (pl.col("struct_high") - pl.col("struct_low") + 1e-9)).alias("body_to_struct_ratio"),
         ])
 
@@ -353,18 +345,7 @@ class FeatureEngineer:
         slow_period: int = 21,
         column: str = "close",
     ) -> pl.DataFrame:
-        """
-        Calculate EMA crossover signals.
-        
-        Args:
-            df: DataFrame with price data
-            fast_period: Fast EMA period
-            slow_period: Slow EMA period
-            column: Price column
-            
-        Returns:
-            DataFrame with EMA and crossover columns
-        """
+        """Calculate EMA crossover signals and clipped distances."""
         df = df.with_columns([
             pl.col(column)
                 .ewm_mean(span=fast_period, adjust=False)
@@ -375,8 +356,11 @@ class FeatureEngineer:
         ])
         
         df = df.with_columns([
-            ((pl.col(column) - pl.col(f"ema_{fast_period}")) / pl.col(f"ema_{fast_period}") * 100).alias(f"ema_{fast_period}_dist_pct"),
-            ((pl.col(column) - pl.col(f"ema_{slow_period}")) / pl.col(f"ema_{slow_period}") * 100).alias(f"ema_{slow_period}_dist_pct"),
+            # Clip extreme percentage distances to a max of +/- 5%
+            (((pl.col(column) - pl.col(f"ema_{fast_period}")) / pl.col(f"ema_{fast_period}") * 100)
+             .clip(lower_bound=-5.0, upper_bound=5.0)).alias(f"ema_{fast_period}_dist_pct"),
+            (((pl.col(column) - pl.col(f"ema_{slow_period}")) / pl.col(f"ema_{slow_period}") * 100)
+             .clip(lower_bound=-5.0, upper_bound=5.0)).alias(f"ema_{slow_period}_dist_pct"),
         ])
 
         # EMA crossover detection
@@ -390,20 +374,15 @@ class FeatureEngineer:
         ])
         
         df = df.with_columns([
-            # Bullish crossover: fast crosses above slow
             (pl.col("_ema_above") & ~pl.col("_ema_above_prev").fill_null(False))
                 .cast(pl.Int8)
                 .alias("ema_cross_bull"),
-            
-            # Bearish crossover: fast crosses below slow
             (~pl.col("_ema_above") & pl.col("_ema_above_prev").fill_null(False))
                 .cast(pl.Int8)
                 .alias("ema_cross_bear"),
         ])
         
-        # Drop temporary columns
         df = df.drop(["_ema_above", "_ema_above_prev"])
-        
         logger.debug(f"EMA crossover calculated ({fast_period}/{slow_period})")
         return df
     
