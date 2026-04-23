@@ -2025,6 +2025,15 @@ class TradingBot:
         #     logger.warning(f"Position limit: {limit_reason} - skipping trade")
         #     return
 
+        # === CRITICAL FIX: ANTI-STACKING ===
+        # Prevent opening another trade if we already have one open in the same direction
+        current_type = 0 if final_signal.signal_type == "BUY" else 1
+        same_dir_count = sum(1 for p in open_positions.iter_rows(named=True) if p.get("type", -1) == current_type)
+        
+        if same_dir_count >= 1:
+            logger.warning(f"Stacking Prevention: Already holding a {final_signal.signal_type} position. Skipping new entry.")
+            return
+
         # 14. Execute trade (with Emergency Broker SL)
         await self._execute_trade_safe(final_signal, position_result, regime_state)
     
@@ -2163,37 +2172,40 @@ class TradingBot:
                     logger.info(f"[SMC LOW] {smc_signal.signal_type} confidence {smc_conf:.0%} < 55% -> Skip")
                 return None
 
-            # Check ML agreement based on raw probability
-            ml_leans_bullish = ml_prediction.probability >= 0.40 
-            ml_leans_bearish = ml_prediction.probability <= 0.60
+            # ============================================================
+            # 2. CONFLUENCE LOGIC: SMC + AI PROBABILITY EDGE
+            # ============================================================
+            # The AI base weight is ~54%. 
+            # Neutral is defined as 48% to 60%.
+            
+            prob = ml_prediction.probability
+            
+            ml_is_strongly_bullish = prob >= 0.60
+            ml_is_strongly_bearish = prob <= 0.48
+            ml_is_neutral = 0.48 <= prob < 0.60
 
-            ml_agrees = (
-                (smc_signal.signal_type == "BUY" and ml_leans_bullish) or
-                (smc_signal.signal_type == "SELL" and ml_leans_bearish)
-            )
-
-            if ml_agrees:
-                # AI agrees! Boost confidence.
-                combined_confidence = (smc_conf + ml_prediction.confidence) / 2
-                reason_suffix = f" | ML AGREES ({ml_prediction.probability:.0%})"
-            else:
-                # OVERRIDE 1: Only force trade if ML is GENUINELY 50/50 and SMC is nearly perfect
-                # FIX: Tightened the probability window to effectively disable bad overrides
-                if 0.48 <= ml_prediction.probability <= 0.52 and smc_conf >= 0.95:
-                    combined_confidence = smc_conf * 0.70  # Heavy 30% penalty for ML uncertainty
-                    reason_suffix = f" | ML OVERRIDDEN (ML Unsure: {ml_prediction.probability:.0%})"
-                    logger.info(f"AI Override: ML is unsure ({ml_prediction.probability:.0%}) but SMC is {smc_conf:.0%} strong. Forcing trade.")
-                    
-                # OVERRIDE 2: Backup Rule
-                elif ml_prediction.confidence < 0.50 and smc_conf >= 0.95:
-                    combined_confidence = smc_conf * 0.70
-                    reason_suffix = f" | ML OVERRIDDEN (ML Weak Conf < 50%)"
-                    logger.info(f"AI Override: ML disagrees but with weak confidence ({ml_prediction.confidence:.0%}). Forcing trade.")
-                    
+            if ml_is_neutral:
+                # The AI is stuck near its baseline. It doesn't see a clear pattern.
+                if smc_conf >= 0.70:
+                    combined_confidence = smc_conf * 0.90 # Slight penalty because AI isn't helping
+                    reason_suffix = f" | AI NEUTRAL ({prob:.1%}) -> Trusting SMC"
+                    logger.info(f"⚖️ AI Neutral ({prob:.1%}). Trusting SMC {smc_signal.signal_type} ({smc_conf:.0%}).")
                 else:
-                    # PROPER FOREX BEHAVIOR: 
-                    # If ML disagrees with SMC, BLOCK the trade! It is likely a fake-out/sweep.
-                    logger.info(f"Signal Blocked: SMC says {smc_signal.signal_type} ({smc_conf:.0%}) but ML strongly disagrees ({ml_prediction.probability:.0%} / conf: {ml_prediction.confidence:.0%})")
+                    logger.warning(f"🚫 BLOCKED: AI is Neutral ({prob:.1%}) and SMC is weak ({smc_conf:.0%}).")
+                    return None
+            else:
+                # The AI is outside the neutral zone, meaning it sees a STRONG directional edge!
+                ml_agrees = (
+                    (smc_signal.signal_type == "BUY" and ml_is_strongly_bullish) or
+                    (smc_signal.signal_type == "SELL" and ml_is_strongly_bearish)
+                )
+
+                if ml_agrees:
+                    combined_confidence = smc_conf
+                    reason_suffix = f" | AI STRONG AGREE ({prob:.1%})"
+                    logger.info(f"✅ CONFLUENCE: SMC {smc_signal.signal_type} + AI Strongly Agrees ({prob:.1%})")
+                else:
+                    logger.warning(f"🚫 BLOCKED: SMC says {smc_signal.signal_type} but AI strongly disagrees ({prob:.1%}).")
                     return None
 
             # Apply penalties

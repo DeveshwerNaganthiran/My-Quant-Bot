@@ -269,18 +269,18 @@ class SmartPositionManager:
 
     def __init__(
         self,
-        breakeven_pips: float = 2.0,       # Changed from 10.0: Trigger BE after just 2 pips
-        trail_start_pips: float = 5.0,     # Changed from 15.0: Start trailing instantly
-        trail_step_pips: float = 2.0,      # Changed from 5.0: Trail very tightly
+        breakeven_pips: float = 8.0,       # Changed from 10.0: Trigger BE after just 2 pips
+        trail_start_pips: float = 15.0,     # Changed from 15.0: Start trailing instantly
+        trail_step_pips: float = 3.0,      # Changed from 5.0: Trail very tightly
         min_profit_to_protect: float = 2.0,# Changed from 30.0: Protect tiny profits
-        max_drawdown_from_peak: float = 10.0,  
+        max_drawdown_from_peak: float = 15.0,  
         # ATR-adaptive exit multipliers
-        atr_be_mult: float = 0.2,          # Changed from 1.0: Trigger BE at 0.2 ATR          # Was 2.0 (Breakeven triggers at 1.0 ATR)
-        atr_trail_start_mult: float = 2.0, # Was 4.0 (Trail starts at 2.0 ATR)
-        atr_trail_step_mult: float = 1.5,  # Was 3.0
+        atr_be_mult: float = 0.5,          # Changed from 1.0: Trigger BE at 0.2 ATR          # Was 2.0 (Breakeven triggers at 1.0 ATR)
+        atr_trail_start_mult: float = 1.0, # Was 4.0 (Trail starts at 2.0 ATR)
+        atr_trail_step_mult: float = 0.5,  # Was 3.0
         # Market Close Handler settings
         enable_market_close_handler: bool = True,
-        min_profit_before_close: float = 10.0,  # Take profit if >= $10 near close
+        min_profit_before_close: float = 2.0,  # Take profit if >= $10 near close
         max_loss_to_hold: float = 100.0,   # Hold loss up to $100 over close
     ):
         self.breakeven_pips = breakeven_pips

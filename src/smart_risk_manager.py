@@ -1101,65 +1101,53 @@ class SmartRiskManager:
             return False, None, "Position not registered"
 
         # === ATR-BASED DYNAMIC SCALING ===
-        # ATR ratio: data-driven volatility multiplier (replaces fixed session multiplier)
         base = baseline_atr if baseline_atr > 0 else self._BASELINE_ATR
         if current_atr > 0:
-            sm = max(0.3, min(current_atr / base, 1.5))  # Clamp 0.3-1.5
+            sm = max(0.5, min(current_atr / base, 1.5))  # Clamp 0.5-1.5
         else:
-            sm = 1.0  # Fallback: no scaling if ATR unavailable
+            sm = 1.0
 
-        # ATR in dollars for this position (XAUUSD: 1 point = $1 per 0.01 lot)
-        # Fixed for Micro Account:
-        atr_dollars = current_atr * guard.lot_size * 10 if current_atr > 0 else 0
+        # FIX 1: Stop scalping pennies inside the spread!
+        # Force a minimum of $3.00 ATR unit per 0.01 lot so the bot aims for real trends
+        raw_atr_dollars = current_atr * guard.lot_size * 100 if current_atr > 0 else 0
+        min_atr_floor = 3.0 * (guard.lot_size / 0.01)
+        atr_unit = max(min_atr_floor, raw_atr_dollars) * sm
 
-        effective_max_loss = self.max_loss_per_trade * sm
+        # FIX 2: Cap effective max loss so huge accounts don't allow infinite drawdown
+        # Maximum logical loss is $10.00 for a 0.01 lot (prevents the $900 soft S/L bug)
+        logical_max_loss = 10.0 * (guard.lot_size / 0.01)  
+        effective_max_loss = min(self.max_loss_per_trade * sm, logical_max_loss)
 
         # === v0.2.5 FIX #4: MONOTONIC RATCHET — max_loss can only TIGHTEN ===
-        # Once a tighter max_loss is calculated, it can never widen back.
-        # Prevents: trade state changing from "declining" to "stalling" widening the stop.
         if effective_max_loss < guard.tightest_max_loss:
             guard.tightest_max_loss = effective_max_loss
         else:
             effective_max_loss = guard.tightest_max_loss
 
-        # === ATR-BASED THRESHOLDS — "Detak Jantung Market" ===
-        # All thresholds use ATR as the base unit, making them SYMMETRIC and adaptive:
-        # - London (high vol) -> wider stops, bigger targets
-        # - Sydney (low vol) -> tighter stops, smaller targets
-        # - Big lot -> wider in dollars, same in ATR terms
-        # atr_unit = how many $ of P/L per 1 ATR move for THIS position
-        atr_unit = atr_dollars if atr_dollars > 0 else 10 * sm  # Fallback if ATR unavailable
-
         # === EXIT STRATEGY v5 — "Dynamic Intelligence" ===
-        # Philosophy: EVERY threshold adapts to regime, ML, velocity, RSI/ADX.
-        # No more fixed numbers — the market tells us when to hold and when to cut.
-
-        # Calculate dynamic multipliers based on ALL available signals
         profit_mult, loss_mult = self._calculate_dynamic_multipliers(
             guard, regime, ml_signal, ml_confidence, market_context
         )
         trade_state = self._classify_trade_state(guard)
 
         # BASE thresholds (ATR multiples)
-        # PROFIT THRESHOLDS (Wider to let profits run)
         tp_min = 0.50 * profit_mult * atr_unit         
-        tp_hard = 2.00 * profit_mult * atr_unit        # Push hard TP to 2x ATR
+        tp_hard = 2.00 * profit_mult * atr_unit        
         tp_secure = 1.20 * profit_mult * atr_unit
         tp_peak_trigger = 0.80 * profit_mult * atr_unit 
         tp_prob = 0.75 * profit_mult * atr_unit        
-        tp_decel = 0.75 * profit_mult * atr_unit       # Ignore small decelerations early on
+        tp_decel = 0.75 * profit_mult * atr_unit       
         tp_small_min = 0.30 * profit_mult * atr_unit   
         tp_small_max = 0.50 * profit_mult * atr_unit   
         tp_early_min = 0.25 * profit_mult * atr_unit   
 
-        # LOSS THRESHOLDS (Tighter to cut losses faster)
-        max_atr_loss = 0.75 * loss_mult * atr_unit     # Strict hard loss cutoff
-        stall_loss = -0.40 * loss_mult * atr_unit      # Cut stalled trades early
-        reversal_loss = -0.35 * loss_mult * atr_unit   # Don't wait around if ML reverses
+        max_atr_loss = 0.75 * loss_mult * atr_unit     
+        stall_loss = -0.40 * loss_mult * atr_unit      
+        reversal_loss = -0.35 * loss_mult * atr_unit   
         warn_loss = -0.45 * loss_mult * atr_unit       
         timeout_loss = -0.50 * loss_mult * atr_unit    
         stagnant_loss = 0.35 * loss_mult * atr_unit
-        # v0.2.5 FIX #4: max_atr_loss ratchet — can only tighten
+        
         if max_atr_loss < guard.tightest_atr_loss:
             guard.tightest_atr_loss = max_atr_loss
         else:
@@ -1554,11 +1542,18 @@ class SmartRiskManager:
 
         # === PRIORITY 0: EMERGENCY SAFETY CHECKS ===
 
-        # === NEW: 1-CENT BREAKEVEN SHIELD (NEVER GO BACK TO LOSS) ===
-        # If the trade ever touches $0.30 in profit, instantly lock the exit at $0.05
-        # This guarantees you never take a loss once the trade moves slightly in your favor
-        if guard.peak_profit >= 0.30 and current_profit <= 0.05 and current_profit > 0:
-            return True, ExitReason.TAKE_PROFIT, f"[MICRO-BE] Instant Breakeven triggered at ${current_profit:.2f} (peak was ${guard.peak_profit:.2f})"
+        # === THE "SECURE THE BAG" SHIELD (Dynamic Trailing) ===
+        # ONLY protect if the peak reaches $2.00+ (Let the trade breathe!)
+        if guard.peak_profit >= 2.00 and current_profit <= guard.peak_profit * 0.70 and current_profit > 0:
+            return True, ExitReason.TAKE_PROFIT, f"[PROFIT-SHIELD] Secured 70% of peak! Exit at ${current_profit:.2f} (peak was ${guard.peak_profit:.2f})"
+
+        # If the trade hits $1.50, lock in 50% of the peak
+        if guard.peak_profit >= 1.50 and current_profit <= guard.peak_profit * 0.50 and current_profit > 0:
+            return True, ExitReason.TAKE_PROFIT, f"[PROFIT-SHIELD] Secured 50% of peak! Exit at ${current_profit:.2f} (peak was ${guard.peak_profit:.2f})"
+            
+        # WE HAVE DELETED THE MICRO-BE RULE.
+        # DO NOT PANIC EXIT FOR PENNIES ANYMORE. Let it hit the Target!
+
 
         # CHECK -1: NO RECOVERY ZONE 
         NO_RECOVERY_THRESHOLD = max(35.0, effective_max_loss * 0.85)
@@ -1868,6 +1863,16 @@ class SmartRiskManager:
             return True, ExitReason.POSITION_LIMIT, (
                 f"[MICRO-CUT] Cutting losing trade to save margin: ${current_profit:.2f}"
             )
+        
+        # === NEW FIX: EARLY MOMENTUM FADE (Don't let $1-$2 profits turn into losses!) ===
+        # If we have at least $0.50 profit, but the market suddenly crashes against us
+        if 0.50 <= current_profit < tp_min:
+            # If velocity drops hard (candle is reversing rapidly)
+            if _vel < -0.15 or (guard.velocity_was_positive and _vel < -0.05 and guard.decel_at_profit_count >= 2):
+                return True, ExitReason.TAKE_PROFIT, (
+                    f"[EARLY-FADE] Securing ${current_profit:.2f} before it becomes a loss! "
+                    f"(vel={_vel:.3f}, peak=${guard.peak_profit:.2f})"
+                )
 
         # === CHECK 1: SMART TAKE PROFIT ===
         if current_profit >= tp_min:  # Profit >= scaled threshold
@@ -1953,58 +1958,49 @@ class SmartRiskManager:
         # PROPER RISK MANAGEMENT: Follow SL rules, don't hope for recovery
 
         # === ATR HARD STOP — dynamic min age based on regime ===
-        # v5c: Max loss is DYNAMIC (0.60 ATR * loss_mult).
-        # Min age for hard stop = grace_minutes * 0.75 (at least 5 min).
-        # Raised from max(3, grace/2) -> max(5, grace*0.75) for more breathing room.
-        hard_stop_min_age = max(5.0, grace_minutes * 0.75)
+        # Give the trade at least 15 minutes to develop before cutting normal losses!
+        hard_stop_min_age = max(15.0, grace_minutes * 2.0)
         if current_profit < 0 and abs(current_profit) >= max_atr_loss and trade_age_minutes >= hard_stop_min_age:
             return True, ExitReason.POSITION_LIMIT, (
                 f"[ATR-STOP] Loss ${abs(current_profit):.2f} >= ${max_atr_loss:.2f} "
-                f"(0.60×{loss_mult:.1f}×ATR) after {trade_age_minutes:.1f}m "
-                f"[{regime}|{trade_state}]"
+                f"after {trade_age_minutes:.1f}m [{regime}|{trade_state}]"
+            )
+
+        # === FIX: ABSOLUTE NO-GRACE STOP ===
+        # If the trade crashes instantly, skip the grace period and cut the bleeding!
+        # BUT: NEVER panic cut if the loss is less than $5.00! Give $2 losses a chance to recover.
+        absolute_stop_loss = max(5.00, max_atr_loss * 2.0)
+        if current_profit < 0 and abs(current_profit) >= absolute_stop_loss:
+            return True, ExitReason.POSITION_LIMIT, (
+                f"[ABSOLUTE-STOP] Loss ${abs(current_profit):.2f} exceeded limit "
+                f"(${absolute_stop_loss:.2f}) - CUTTING IMMEDIATELY"
             )
 
         if current_profit < 0:
             loss_in_atr = abs(current_profit) / atr_unit if atr_unit > 0 else 0
 
-            # v5: Early cut thresholds ADAPT to trade state
-            # In crashing state: cut sooner. In recovering state: give more room.
             mom_threshold = -60 if trade_state != "crashing" else -40
             loss_threshold = 0.30 * loss_mult if trade_state != "crashing" else 0.20 * loss_mult
 
             momentum_trigger = momentum < mom_threshold and loss_in_atr >= loss_threshold
-            velocity_trigger = _vel < -0.30 and loss_in_atr >= 0.20 * loss_mult  # v6: Kalman
+            velocity_trigger = _vel < -0.30 and loss_in_atr >= 0.20 * loss_mult  
 
-            # VELOCITY EMERGENCY EXIT — only bypass grace for EXTREME drops
-            # VELOCITY EMERGENCY EXIT — only bypass grace for EXTREME drops
+            # === FIX: EMERGENCY VELOCITY EXIT ===
+            # Require a much faster drop AND require the loss to be at least $4.00 
+            # to prevent cutting trades at $2.00 during normal market wiggles.
             velocity_emergency = (
-                _vel < -0.50  # FIX: Was -0.20. Require a true crash.
-                and loss_in_atr >= 0.60 * loss_mult  # FIX: Was 0.25. Give the trade 0.6 ATR room to breathe.
-                and _accel < -0.005  # FIX: Was -0.001. Require severe deceleration.
-                and len(guard.profit_history) >= 6  # FIX: Was 4. Wait for more data points to avoid fake-outs.
+                _vel < -0.35  
+                and abs(current_profit) >= 4.00  # <--- THIS IS THE KEY FIX
+                and _accel < -0.001  
+                and len(guard.profit_history) >= 4  
             )
 
             if velocity_emergency:
-                logger.info(
-                    f"[VELOCITY EXIT] Loss ${abs(current_profit):.2f} ({loss_in_atr:.2f} ATR) "
-                    f"vel={_vel:.3f} accel={_accel:.4f} — EMERGENCY CUT"
-                )
-                return True, ExitReason.TREND_REVERSAL, (
-                    f"[VELOCITY EXIT] Loss ${abs(current_profit):.2f} ({loss_in_atr:.2f} ATR) "
-                    f"vel={_vel:.3f} accel={_accel:.4f} — fast drop detected"
-                )
+                logger.info(f"[VELOCITY EXIT] Loss ${abs(current_profit):.2f} vel={_vel:.3f} — EMERGENCY CUT")
+                return True, ExitReason.TREND_REVERSAL, f"[VELOCITY EXIT] Fast drop detected — cutting"
 
-            if momentum_trigger or velocity_trigger:
-                if trade_age_minutes < grace_minutes:
-                    logger.info(f"[GRACE] Loss ${abs(current_profit):.2f} ({loss_in_atr:.2f} ATR) + momentum ({momentum:.0f}) vel({_vel:.3f}) — holding {trade_age_minutes:.1f}m/{grace_minutes}m grace")
-                else:
-                    trigger_type = "momentum" if momentum_trigger else "velocity"
-                    logger.info(f"[EARLY CUT] Loss ${abs(current_profit):.2f} ({loss_in_atr:.2f} ATR) + weak {trigger_type} — CUTTING")
-                    return True, ExitReason.TREND_REVERSAL, f"[EARLY CUT] Loss ${abs(current_profit):.2f} ({loss_in_atr:.2f} ATR) + {trigger_type} — cutting"
-
-            # Time-aware stagnation: stagnant for 120s+ with loss > 0.25 ATR
-            # v4: much more patient — 120s (from 45s), min age 5 min (from 2)
-            if guard.stagnation_seconds >= 120 and abs(current_profit) > stagnant_loss and trade_age_minutes >= 5:
+            # THE STAGNATION CUT: Give it 15 minutes (900 seconds) before cutting sideways chop!
+            if guard.stagnation_seconds >= 900 and abs(current_profit) > stagnant_loss and trade_age_minutes >= 15:
                 return True, ExitReason.TREND_REVERSAL, f"[STAGNANT] Loss ${abs(current_profit):.2f} stagnant {guard.stagnation_seconds:.0f}s — cutting"
 
         # === CHECK 4: TREND REVERSAL (ATR-based) ===
