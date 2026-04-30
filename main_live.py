@@ -1,16 +1,17 @@
 """
-Main Live Trading Orchestrator (INVERTED LOGIC: SELL=BUY, BUY=SELL)
+Main Live Trading Orchestrator (WIN/LOSS ALTERNATOR)
 ==============================
 Asynchronous event-driven trading system.
 
 Pipeline:
-1. Load trained models (.pkl)
+1. Load trained models & Forced Direction State
 2. Fetch Data -> Convert to Polars
 3. Apply SMC & Feature Engineering
 4. Detect Market Regime (HMM)
-5. Get AI Signal (XGBoost) -> INVERTED
+5. Get AI Signal & SMC Signal -> Align with Forced Direction
 6. Check Risk & Position Size
 7. Execute Trade
+8. Trade Closes -> Win = Same Direction | Loss = Flip Direction
 """
 
 import asyncio
@@ -187,6 +188,28 @@ class TradingBot:
         self._dash_status_file = Path("data/bot_status.json")
 
         self._restore_dashboard_state()
+        self._forced_next_direction = self._load_forced_direction()
+    
+    def _load_forced_direction(self):
+        """Loads the last forced direction from file."""
+        try:
+            if os.path.exists("data/forced_direction.txt"):
+                with open("data/forced_direction.txt", "r") as f:
+                    direction = f.read().strip().upper()
+                    if direction in ["BUY", "SELL"]:
+                        return direction
+        except:
+            pass
+        return None
+
+    def _save_forced_direction(self, direction):
+        """Saves the forced direction to file so it survives crashes."""
+        try:
+            os.makedirs("data", exist_ok=True)
+            with open("data/forced_direction.txt", "w") as f:
+                f.write(direction)
+        except:
+            pass
 
     def _invert_smc_signal(self, signal: Optional[SMCSignal]) -> Optional[SMCSignal]:
         """Invert SMC signal direction for opposite trading."""
@@ -216,18 +239,22 @@ class TradingBot:
             stop_loss=new_sl,
             take_profit=new_tp,
             confidence=signal.confidence,
-            reason=signal.reason.replace("BUY", "SELL") if signal.signal_type == "BUY" else signal.reason.replace("SELL", "BUY")
+            reason=f"[FORCED FLIP -> {new_type}] Original: {signal.reason}"
         )
 
     def _invert_ml_prediction(self, ml_pred):
         """Invert ML prediction direction for opposite trading."""
-        if not ml_pred:
-            return None
+        if not ml_pred or getattr(ml_pred, 'signal', 'HOLD') == 'HOLD':
+            return ml_pred
+            
         new_signal = "SELL" if ml_pred.signal == "BUY" else ("BUY" if ml_pred.signal == "SELL" else ml_pred.signal)
+        fi = getattr(ml_pred, 'feature_importance', {})
+        
         return SimpleNamespace(
             signal=new_signal,
             confidence=ml_pred.confidence,
-            probability=1.0 - ml_pred.probability
+            probability=1.0 - ml_pred.probability,
+            feature_importance=fi
         )
 
     def _restore_dashboard_state(self):
@@ -548,6 +575,7 @@ class TradingBot:
                     "mlConfidence": self.config.ml.confidence_threshold,
                     "cooldownSeconds": self.config.thresholds.trade_cooldown_seconds,
                     "symbol": self.config.symbol,
+                    "forcedDirection": self._forced_next_direction
                 },
                 "h1Bias": getattr(self, "_h1_bias_cache", "NEUTRAL"),
                 "dynamicThreshold": getattr(self, "_last_dynamic_threshold", self.config.ml.confidence_threshold),
@@ -740,7 +768,7 @@ class TradingBot:
             exit_str = "Exit v5.0"
 
         logger.info("=" * 60)
-        logger.info(f"XAUBOT AI {version_str} (INVERTED)")
+        logger.info(f"XAUBOT AI {version_str} (ADAPTIVE WIN/LOSS ALTERNATOR)")
         logger.info(f"Strategy: {exit_str}")
         logger.info("=" * 60)
         logger.info(f"Symbol: {self.config.symbol}")
@@ -839,9 +867,20 @@ class TradingBot:
             logger.warning(f"Position guard sync failed: {e}")
 
     def _get_available_features(self, df: pl.DataFrame) -> list:
-        if self.ml_model.fitted and self.ml_model.feature_names:
-            return [f for f in self.ml_model.feature_names if f in df.columns]
+        # 1. ALWAYS prioritize the exact order expected by the XGBoost booster to avoid Feature Mismatch Error
+        try:
+            if hasattr(self.ml_model, "xgb_model") and self.ml_model.xgb_model is not None:
+                booster = self.ml_model.xgb_model
+                if hasattr(booster, "feature_names") and booster.feature_names:
+                    return list(booster.feature_names)
+        except Exception:
+            pass
 
+        # 2. Fallback to model's saved feature names
+        if self.ml_model.fitted and self.ml_model.feature_names:
+            return list(self.ml_model.feature_names)
+
+        # 3. Fallback to default
         default_features = get_default_feature_columns()
         return [f for f in default_features if f in df.columns]
 
@@ -906,11 +945,10 @@ class TradingBot:
             weights = self._get_regime_weights()
             score = sum(signals[k] * weights[k] for k in signals)
 
-            # INVERTED logic mapping
             if score >= 0.3:
-                bias = "BEARISH"  # Inverted from BULLISH
+                bias = "BULLISH"
             elif score <= -0.3:
-                bias = "BULLISH"  # Inverted from BEARISH
+                bias = "BEARISH"
             else:
                 bias = "NEUTRAL"
 
@@ -1101,6 +1139,36 @@ class TradingBot:
                 magic=self.config.magic_number,
             )
 
+            # === BROKER CLOSE CATCHER (The Win/Loss Flipper) ===
+            fresh_mt5 = open_positions
+            mt5_tickets = set()
+            if fresh_mt5 is not None and not fresh_mt5.is_empty():
+                mt5_tickets = set(fresh_mt5["ticket"].to_list())
+                
+            stale = set(self.smart_risk._position_guards.keys()) - mt5_tickets
+            for ticket in stale:
+                guard = self.smart_risk._position_guards[ticket]
+                last_profit = guard.current_profit
+                trade_dir = guard.direction
+                
+                logger.info(f"Position #{ticket} closed by Broker S/L or T/P. Profit: ${last_profit:.2f}")
+                self.smart_risk.record_trade_result(last_profit)
+                
+                # ---> WIN/LOSS ALTERNATOR LOGIC (Broker Close) <---
+                if last_profit > 0:
+                    self._forced_next_direction = trade_dir
+                    logger.warning(f"🟢 Trade WON (+${last_profit:.2f}). Next trade stays {self._forced_next_direction}!")
+                else:
+                    self._forced_next_direction = "BUY" if trade_dir == "SELL" else "SELL"
+                    logger.warning(f"🔴 Trade LOST (${last_profit:.2f}). Next trade FLIPS to {self._forced_next_direction}!")
+                    
+                self._save_forced_direction(self._forced_next_direction)
+                # --------------------------------------------------
+                
+                self.smart_risk.unregister_position(ticket)
+                self.position_manager._peak_profits.pop(ticket, None)
+                self._pyramid_done_tickets.discard(ticket)
+
             if len(open_positions) > 0 and not self.simulation:
                 cached_ml = getattr(self, '_cached_ml_prediction', None)
                 cached_df = getattr(self, '_cached_df', None)
@@ -1136,16 +1204,35 @@ class TradingBot:
                             mtf_df = mtf_df.with_columns(pl.lit(1.0).alias("regime_confidence"))
                         
                         feature_cols = self._get_available_features(mtf_df)
+                        missing_cols = [c for c in feature_cols if c not in mtf_df.columns]
+                        if missing_cols:
+                            mtf_df = mtf_df.with_columns([pl.lit(0.0).alias(c) for c in missing_cols])
+                            
                         raw_ml_prediction = self.ml_model.predict(mtf_df, feature_cols)
-                        ml_prediction = self._invert_ml_prediction(raw_ml_prediction)
+                        
+                        if self._forced_next_direction and raw_ml_prediction.signal != self._forced_next_direction:
+                            ml_prediction = self._invert_ml_prediction(raw_ml_prediction)
+                        else:
+                            ml_prediction = raw_ml_prediction
+                            
                         eval_df = mtf_df
                     else:
                         df_fallback = self.mt5.get_market_data(self.config.symbol, self.config.execution_timeframe, count=50)
                         if len(df_fallback) == 0: return
                         df_fallback = self.features.calculate_all(df_fallback, include_ml_features=True)
+                        
                         feature_cols = self._get_available_features(df_fallback)
+                        missing_cols = [c for c in feature_cols if c not in df_fallback.columns]
+                        if missing_cols:
+                            df_fallback = df_fallback.with_columns([pl.lit(0.0).alias(c) for c in missing_cols])
+                            
                         raw_ml_prediction = self.ml_model.predict(df_fallback, feature_cols)
-                        ml_prediction = self._invert_ml_prediction(raw_ml_prediction)
+                        
+                        if self._forced_next_direction and raw_ml_prediction.signal != self._forced_next_direction:
+                            ml_prediction = self._invert_ml_prediction(raw_ml_prediction)
+                        else:
+                            ml_prediction = raw_ml_prediction
+                            
                         eval_df = df_fallback
                         
                     await self._smart_position_management(
@@ -1402,7 +1489,6 @@ class TradingBot:
                 reg_map = {"low_volatility": 0, "medium_volatility": 1, "high_volatility": 2, "crisis": 3}
                 reg_str = regime_state.regime.value if regime_state else "medium_volatility"
                 reg_val = reg_map.get(reg_str, 1)
-                
                 mtf_df = mtf_df.with_columns(pl.lit(reg_val).cast(pl.Int32).alias("regime"))
                 
             if "regime_confidence" not in mtf_df.columns:
@@ -1410,16 +1496,56 @@ class TradingBot:
                 mtf_df = mtf_df.with_columns(pl.lit(reg_conf).cast(pl.Float64).alias("regime_confidence"))
                 
             feature_cols = self._get_available_features(mtf_df)
+            missing_cols = [c for c in feature_cols if c not in mtf_df.columns]
+            if missing_cols:
+                mtf_df = mtf_df.with_columns([pl.lit(0.0).alias(c) for c in missing_cols])
+                
             raw_ml_prediction = self.ml_model.predict(mtf_df, feature_cols)
-            ml_prediction = self._invert_ml_prediction(raw_ml_prediction)
+            raw_smc_signal = self.smc.generate_signal(df)
             
+            if self._forced_next_direction:
+                if raw_ml_prediction.signal != self._forced_next_direction:
+                    ml_prediction = self._invert_ml_prediction(raw_ml_prediction)
+                else:
+                    ml_prediction = raw_ml_prediction
+                    
+                if raw_smc_signal and raw_smc_signal.signal_type != self._forced_next_direction:
+                    smc_signal = self._invert_smc_signal(raw_smc_signal)
+                else:
+                    smc_signal = raw_smc_signal
+                mode_tag = f"[FORCED {self._forced_next_direction}]"
+            else:
+                ml_prediction = raw_ml_prediction
+                smc_signal = raw_smc_signal
+                mode_tag = "[STANDARD]"
+                
             self._cached_ml_prediction = ml_prediction
             self._cached_df = df
         else:
             feature_cols = self._get_available_features(df)
+            missing_cols = [c for c in feature_cols if c not in df.columns]
+            if missing_cols:
+                df = df.with_columns([pl.lit(0.0).alias(c) for c in missing_cols])
+                
             raw_ml_prediction = self.ml_model.predict(df, feature_cols)
-            ml_prediction = self._invert_ml_prediction(raw_ml_prediction)
+            raw_smc_signal = self.smc.generate_signal(df)
             
+            if self._forced_next_direction:
+                if raw_ml_prediction.signal != self._forced_next_direction:
+                    ml_prediction = self._invert_ml_prediction(raw_ml_prediction)
+                else:
+                    ml_prediction = raw_ml_prediction
+                    
+                if raw_smc_signal and raw_smc_signal.signal_type != self._forced_next_direction:
+                    smc_signal = self._invert_smc_signal(raw_smc_signal)
+                else:
+                    smc_signal = raw_smc_signal
+                mode_tag = f"[FORCED {self._forced_next_direction}]"
+            else:
+                ml_prediction = raw_ml_prediction
+                smc_signal = raw_smc_signal
+                mode_tag = "[STANDARD]"
+                
             self._cached_ml_prediction = ml_prediction
             self._cached_df = df
 
@@ -1428,17 +1554,13 @@ class TradingBot:
         self._last_ml_probability = ml_prediction.probability
         self._last_ml_updated = datetime.now(ZoneInfo("Asia/Kuala_Lumpur")).strftime("%H:%M:%S")
 
-       
-        # FIXED: Just use the signal directly, because smc_polars.py is ALREADY inverted!
-        smc_signal = self.smc.generate_signal(df)
-
         _wib_now = datetime.now(ZoneInfo("Asia/Kuala_Lumpur")).strftime("%H:%M:%S")
         if smc_signal:
             self._last_raw_smc_signal = smc_signal.signal_type
             self._last_raw_smc_confidence = smc_signal.confidence
             self._last_raw_smc_reason = smc_signal.reason
             self._last_raw_smc_updated = _wib_now
-            self._dash_log("trade", f"SMC: {smc_signal.signal_type} ({smc_signal.confidence:.0%}) - {smc_signal.reason}")
+            self._dash_log("trade", f"{mode_tag} SMC: {smc_signal.signal_type} ({smc_signal.confidence:.0%}) - {smc_signal.reason}")
         else:
             self._last_raw_smc_signal = ""
             self._last_raw_smc_confidence = 0.0
@@ -1522,7 +1644,8 @@ class TradingBot:
         if self._loop_count % 4 == 0:
             price = df["close"].tail(1).item()
             h1_tag = f" | H1: {h1_bias}" if h1_bias != "NEUTRAL" else ""
-            logger.info(f"Price: {price:.2f} | Regime: {regime_state.regime.value if regime_state else 'N/A'} | SMC: {smc_signal.signal_type if smc_signal else 'NONE'} | ML: {ml_prediction.signal}({ml_prediction.confidence:.0%}){h1_tag}")
+            direction_tag = f" | Mode: {self._forced_next_direction}" if self._forced_next_direction else ""
+            logger.info(f"Price: {price:.2f} | Regime: {regime_state.regime.value if regime_state else 'N/A'} | SMC: {smc_signal.signal_type if smc_signal else 'NONE'} | ML: {ml_prediction.signal}({ml_prediction.confidence:.0%}){h1_tag}{direction_tag}")
 
         self._last_filter_results.append({"name": "SMC Signal", "passed": smc_signal is not None, "detail": f"{smc_signal.signal_type} ({smc_signal.confidence:.0%})" if smc_signal else "No signal"})
 
@@ -1668,15 +1791,22 @@ class TradingBot:
             logger.debug("Smart Risk: Lot size is 0 (Trade Rejected) - skipping trade")
             return
 
-        # === CANDLE BEHAVIOR FILTER (Standard) ===
-        # Since signals are inverted at the top, standard logic works perfectly here.
+        # === ADAPTIVE CANDLE BEHAVIOR FILTER ===
         current_open = df["open"].tail(1).item()
-        if final_signal.signal_type == "BUY" and current_price < current_open:
-            logger.info(f"Candle Behavior: BUY blocked - Candle is currently RED (Open: {current_open:.2f}, Price: {current_price:.2f})")
+        
+        if self._forced_next_direction == "BUY" and current_price > current_open:
+            logger.info(f"Candle Behavior: BUY blocked - Candle is currently GREEN (Forced BUY expects RED). Open: {current_open:.2f}, Price: {current_price:.2f}")
             return
-        elif final_signal.signal_type == "SELL" and current_price > current_open:
-            logger.info(f"Candle Behavior: SELL blocked - Candle is currently GREEN (Open: {current_open:.2f}, Price: {current_price:.2f})")
+        elif self._forced_next_direction == "SELL" and current_price < current_open:
+            logger.info(f"Candle Behavior: SELL blocked - Candle is currently RED (Forced SELL expects GREEN). Open: {current_open:.2f}, Price: {current_price:.2f}")
             return
+        elif not self._forced_next_direction:
+            if final_signal.signal_type == "BUY" and current_price < current_open:
+                logger.info(f"Candle Behavior: BUY blocked - Candle is currently RED. Open: {current_open:.2f}, Price: {current_price:.2f}")
+                return
+            elif final_signal.signal_type == "SELL" and current_price > current_open:
+                logger.info(f"Candle Behavior: SELL blocked - Candle is currently GREEN. Open: {current_open:.2f}, Price: {current_price:.2f}")
+                return
 
         session_mult = getattr(self, '_current_session_multiplier', 1.0)
         if session_mult < 1.0:
@@ -1856,8 +1986,6 @@ class TradingBot:
                     logger.warning(f"🚫 BLOCKED: AI is Neutral ({prob:.1%}) and SMC is weak ({smc_conf:.0%}).")
                     return None
             else:
-                # FIXED: Since the signals are already inverted by the wrapper, 
-                # we just check if they agree normally!
                 ml_agrees = (
                     (smc_signal.signal_type == "BUY" and ml_is_strongly_bullish) or
                     (smc_signal.signal_type == "SELL" and ml_is_strongly_bearish)
@@ -1899,7 +2027,7 @@ class TradingBot:
         current_price: float,
     ) -> Tuple[bool, str]:
         """
-        Check if price is in a pullback/retrace against signal direction (INVERTED).
+        Check if price is in a pullback/retrace against signal direction.
         """
         try:
             recent = df.tail(10)
@@ -1942,45 +2070,70 @@ class TradingBot:
                     elif current_price < ema_9 * 0.999:  
                         price_vs_ema = "BELOW"
 
-            rsi_extreme = False
-            rsi_value = 50
-            if "rsi" in df.columns:
-                rsi_value = recent["rsi"].to_list()[-1]
-                if rsi_value is not None:
-                    rsi_extreme = rsi_value > 75 or rsi_value < 25
+            if self._forced_next_direction:
+                if signal_direction == "BUY":  
+                    if momentum_direction == "UP" and short_momentum > bounce_threshold:
+                        return False, f"BUY blocked: Price bouncing UP (+${short_momentum:.2f} > {bounce_threshold:.2f})"
 
-            # FIXED: Standard logic because signal_direction is already inverted by wrapper
-            if signal_direction == "SELL":  
-                if momentum_direction == "UP" and short_momentum > bounce_threshold:
-                    return False, f"SELL blocked: Price bouncing UP (+${short_momentum:.2f} > {bounce_threshold:.2f})"
+                    if macd_hist_direction == "RISING" and momentum_direction == "UP":
+                        return False, f"BUY blocked: MACD bullish + price rising"
 
-                if macd_hist_direction == "RISING" and momentum_direction == "UP":
-                    return False, f"SELL blocked: MACD bullish + price rising"
+                    if price_vs_ema == "ABOVE" and momentum_direction == "UP":
+                        return False, f"BUY blocked: Price above EMA9 and rising"
 
-                if price_vs_ema == "ABOVE" and momentum_direction == "UP":
-                    return False, f"SELL blocked: Price above EMA9 and rising"
+                    if momentum_direction == "DOWN":
+                        return True, f"BUY OK: Momentum aligned"
 
-                if momentum_direction == "DOWN":
-                    return True, f"SELL OK: Momentum aligned (${short_momentum:.2f})"
+                    if abs(short_momentum) < consolidation_threshold:
+                        return True, f"BUY OK: Consolidation phase (<{consolidation_threshold:.2f})"
 
-                if abs(short_momentum) < consolidation_threshold:
-                    return True, f"SELL OK: Consolidation phase (<{consolidation_threshold:.2f})"
+                elif signal_direction == "SELL":  
+                    if momentum_direction == "DOWN" and short_momentum < -bounce_threshold:
+                        return False, f"SELL blocked: Price falling DOWN (${short_momentum:.2f} < -{bounce_threshold:.2f})"
 
-            elif signal_direction == "BUY":  
-                if momentum_direction == "DOWN" and short_momentum < -bounce_threshold:
-                    return False, f"BUY blocked: Price falling DOWN (${short_momentum:.2f} < -{bounce_threshold:.2f})"
+                    if macd_hist_direction == "FALLING" and momentum_direction == "DOWN":
+                        return False, f"SELL blocked: MACD bearish + price falling"
 
-                if macd_hist_direction == "FALLING" and momentum_direction == "DOWN":
-                    return False, f"BUY blocked: MACD bearish + price falling"
+                    if price_vs_ema == "BELOW" and momentum_direction == "DOWN":
+                        return False, f"SELL blocked: Price below EMA9 and falling"
 
-                if price_vs_ema == "BELOW" and momentum_direction == "DOWN":
-                    return False, f"BUY blocked: Price below EMA9 and falling"
+                    if momentum_direction == "UP":
+                        return True, f"SELL OK: Momentum aligned"
 
-                if momentum_direction == "UP":
-                    return True, f"BUY OK: Momentum aligned (+${short_momentum:.2f})"
+                    if abs(short_momentum) < consolidation_threshold:
+                        return True, f"SELL OK: Consolidation phase (<{consolidation_threshold:.2f})"
+            else:
+                if signal_direction == "SELL":  
+                    if momentum_direction == "UP" and short_momentum > bounce_threshold:
+                        return False, f"SELL blocked: Price bouncing UP (+${short_momentum:.2f} > {bounce_threshold:.2f})"
 
-                if abs(short_momentum) < consolidation_threshold:
-                    return True, f"BUY OK: Consolidation phase (<{consolidation_threshold:.2f})"
+                    if macd_hist_direction == "RISING" and momentum_direction == "UP":
+                        return False, f"SELL blocked: MACD bullish + price rising"
+
+                    if price_vs_ema == "ABOVE" and momentum_direction == "UP":
+                        return False, f"SELL blocked: Price above EMA9 and rising"
+
+                    if momentum_direction == "DOWN":
+                        return True, f"SELL OK: Momentum aligned"
+
+                    if abs(short_momentum) < consolidation_threshold:
+                        return True, f"SELL OK: Consolidation phase (<{consolidation_threshold:.2f})"
+
+                elif signal_direction == "BUY":  
+                    if momentum_direction == "DOWN" and short_momentum < -bounce_threshold:
+                        return False, f"BUY blocked: Price falling DOWN (${short_momentum:.2f} < -{bounce_threshold:.2f})"
+
+                    if macd_hist_direction == "FALLING" and momentum_direction == "DOWN":
+                        return False, f"BUY blocked: MACD bearish + price falling"
+
+                    if price_vs_ema == "BELOW" and momentum_direction == "DOWN":
+                        return False, f"BUY blocked: Price below EMA9 and falling"
+
+                    if momentum_direction == "UP":
+                        return True, f"BUY OK: Momentum aligned"
+
+                    if abs(short_momentum) < consolidation_threshold:
+                        return True, f"BUY OK: Consolidation phase (<{consolidation_threshold:.2f})"
 
             return True, f"Pullback check passed (mom={momentum_direction}, macd={macd_hist_direction})"
 
@@ -2256,6 +2409,28 @@ class TradingBot:
                                 profit = row.get("profit", 0)
                                 break
                         risk_result = self.smart_risk.record_trade_result(profit)
+                        
+                        # ---> 3-LOSS ADAPTIVE REGIME FLIP <---
+                        # We let the AI pick the direction. We only invert the logic if the AI gets it wrong 3 times in a row.
+                        consecutive_losses = self.smart_risk.get_state().consecutive_losses
+                        
+                        if profit < 0 and consecutive_losses >= 3:
+                            old_mode = getattr(self, "_trading_logic_mode", "STANDARD")
+                            self._trading_logic_mode = "STANDARD" if old_mode == "INVERTED" else "INVERTED"
+                            
+                            # Reset the loss counter so it gets 3 fresh chances
+                            self.smart_risk._state.consecutive_losses = 0
+                            self.smart_risk._save_daily_state()
+                            
+                            # Delete the forced direction so the AI can think freely again
+                            self._forced_next_direction = None
+                            self._save_forced_direction("")
+                            
+                            logger.warning("=" * 50)
+                            logger.warning(f"🔄 MARKET SHIFT DETECTED!")
+                            logger.warning(f"Hit 3 losses. Switching bot to {self._trading_logic_mode} logic!")
+                            logger.warning("=" * 50)
+                        # ----------------------------------------------------
                         self.smart_risk.unregister_position(action.ticket)
                         self.position_manager._peak_profits.pop(action.ticket, None)
                         self._pyramid_done_tickets.discard(action.ticket)  
@@ -2355,6 +2530,18 @@ class TradingBot:
                     logger.info(f"CLOSED #{ticket}: {message}")
 
                     risk_result = self.smart_risk.record_trade_result(profit)
+                    
+                    # ---> WIN/LOSS ALTERNATOR LOGIC (Normal Close) <---
+                    if profit > 0:
+                        self._forced_next_direction = direction
+                        logger.warning(f"🟢 Trade WON (+${profit:.2f}). Next trade stays {self._forced_next_direction}!")
+                    else:
+                        self._forced_next_direction = "BUY" if direction == "SELL" else "SELL"
+                        logger.warning(f"🔴 Trade LOST (${profit:.2f}). Next trade FLIPS to {self._forced_next_direction}!")
+                        
+                    self._save_forced_direction(self._forced_next_direction)
+                    # --------------------------------------------------
+
                     self.smart_risk.unregister_position(ticket)
                     self._pyramid_done_tickets.discard(ticket)  
 
@@ -2566,11 +2753,16 @@ class TradingBot:
                 df_tf = self.smc.calculate_all(df_tf)
                 struct = df_tf["market_structure"].tail(1).item()
                 
-                # FIXED: Standard logic
-                if signal_direction == "BUY" and struct == 1:
+                # FORCE ALIGNMENT FOR ALTERNATOR
+                if self._forced_next_direction:
+                    # If we are forcing a trade, bypass MTF structure blocks
                     aligned_tfs.append(tf)
-                elif signal_direction == "SELL" and struct == -1:
-                    aligned_tfs.append(tf)
+                else:
+                    # Standard logic
+                    if signal_direction == "BUY" and struct == 1:
+                        aligned_tfs.append(tf)
+                    elif signal_direction == "SELL" and struct == -1:
+                        aligned_tfs.append(tf)
             except Exception:
                 pass
                 

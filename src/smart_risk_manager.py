@@ -1542,17 +1542,24 @@ class SmartRiskManager:
 
         # === PRIORITY 0: EMERGENCY SAFETY CHECKS ===
 
-        # === THE "SECURE THE BAG" SHIELD (Dynamic Trailing) ===
-        # ONLY protect if the peak reaches $2.00+ (Let the trade breathe!)
-        if guard.peak_profit >= 2.00 and current_profit <= guard.peak_profit * 0.70 and current_profit > 0:
-            return True, ExitReason.TAKE_PROFIT, f"[PROFIT-SHIELD] Secured 70% of peak! Exit at ${current_profit:.2f} (peak was ${guard.peak_profit:.2f})"
-
-        # If the trade hits $1.50, lock in 50% of the peak
-        if guard.peak_profit >= 1.50 and current_profit <= guard.peak_profit * 0.50 and current_profit > 0:
-            return True, ExitReason.TAKE_PROFIT, f"[PROFIT-SHIELD] Secured 50% of peak! Exit at ${current_profit:.2f} (peak was ${guard.peak_profit:.2f})"
+        # 1. THE "NEVER GO RED" SHIELD (Upgraded to $1.50 Rule)
+        # We must clear the spread first. Once profit hits $1.50, DO NOT let it go red.
+        # Exit at +$0.20 if it crashes.
+        if guard.peak_profit >= 1.50 and current_profit <= 0.20:
+            return True, ExitReason.TAKE_PROFIT, f"[NEVER-GO-RED] Secured Breakeven (+${current_profit:.2f}). Peak was ${guard.peak_profit:.2f}"
+        # 2. AGGRESSIVE TIERED PROFIT SHIELDS
+        # Lock in the highest possible profit without letting it fall back to Breakeven
+        if guard.peak_profit >= 10.00 and current_profit <= guard.peak_profit * 0.90:
+            return True, ExitReason.TAKE_PROFIT, f"[PROFIT-SHIELD-MAX] Secured 90% of peak! Exit at ${current_profit:.2f} (peak was ${guard.peak_profit:.2f})"
             
-        # WE HAVE DELETED THE MICRO-BE RULE.
-        # DO NOT PANIC EXIT FOR PENNIES ANYMORE. Let it hit the Target!
+        elif guard.peak_profit >= 5.00 and current_profit <= guard.peak_profit * 0.85:
+            return True, ExitReason.TAKE_PROFIT, f"[PROFIT-SHIELD-HIGH] Secured 85% of peak! Exit at ${current_profit:.2f} (peak was ${guard.peak_profit:.2f})"
+            
+        elif guard.peak_profit >= 2.00 and current_profit <= guard.peak_profit * 0.70:
+            return True, ExitReason.TAKE_PROFIT, f"[PROFIT-SHIELD-MED] Secured 70% of peak! Exit at ${current_profit:.2f} (peak was ${guard.peak_profit:.2f})"
+            
+        elif guard.peak_profit >= 1.00 and current_profit <= guard.peak_profit * 0.50:
+            return True, ExitReason.TAKE_PROFIT, f"[PROFIT-SHIELD-MIN] Secured 50% of peak! Exit at ${current_profit:.2f} (peak was ${guard.peak_profit:.2f})"
 
 
         # CHECK -1: NO RECOVERY ZONE 
@@ -2032,7 +2039,7 @@ class SmartRiskManager:
         # Also uses loss_mult floor of 0.8 so ML disagreement can't crush threshold
         # to $4-5 (which fires on normal gold noise within seconds).
         backup_loss_mult = max(0.7, loss_mult)  # v6: relaxed 0.8->0.7 (ML fix makes band-aid unnecessary)
-        backup_pct = min(0.30, 0.20 * backup_loss_mult)  # Cap at 30% of max_loss
+        backup_pct = min(0.60, 0.50 * backup_loss_mult)  # Allows ~$5.00 of breathing room instead of $2.00
         if trade_age_minutes >= grace_minutes and current_profit <= -(effective_max_loss * backup_pct):
             return True, ExitReason.POSITION_LIMIT, (
                 f"[BACKUP-SL] Loss ${abs(current_profit):.2f} ({backup_pct:.0%} of "
