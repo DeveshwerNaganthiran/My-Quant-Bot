@@ -599,7 +599,7 @@ class MT5Connector:
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,
-            "volume": float(volume),
+            "volume": round(float(volume), 2),
             "type": mt5_type,
             "price": float(order_price),
             "deviation": deviation,
@@ -714,7 +714,7 @@ class MT5Connector:
             request = {
                 "action": mt5.TRADE_ACTION_DEAL,
                 "symbol": symbol,
-                "volume": float(pos_volume),
+                "volume": round(float(pos_volume), 2),
                 "type": close_type,
                 "position": ticket,
                 "price": price,

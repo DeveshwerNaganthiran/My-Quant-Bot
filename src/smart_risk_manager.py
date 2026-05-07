@@ -372,8 +372,8 @@ class SmartRiskManager:
     def __init__(
         self,
         capital: float = 5000.0,
-        max_daily_loss_percent: float = 100.0,      # Max 5% daily loss
-        max_total_loss_percent: float = 100.0,     # Max 10% total loss (stop trading)
+        max_daily_loss_percent: float = 10000,      # Max 5% daily loss
+        max_total_loss_percent: float = 10000.0,     # Max 10% total loss (stop trading)
         max_loss_per_trade_percent: float = 0.5,  # Max 0.5% per trade (FIX 5: was 1.0%, ~$25 for $5k capital)
         emergency_sl_percent: float = 2.0,        # Emergency broker S/L 2% per trade
         base_lot_size: float = 0.01,              # Lot dasar sangat kecil
@@ -1857,7 +1857,7 @@ class SmartRiskManager:
                 )
             
         # === CHECK 0.5: MICRO ACCOUNT BUILDER (For $3 - $10 balances) ===
-        if self.capital <= 10.0 and current_profit >= 0.05:
+        if self.capital <= 10.0 and current_profit >= 100.05:  # Disabled micro scalp
             # If we make 5+ cents and momentum stops pushing up, or we hit 20 cents, TAKE IT instantly!
             if _vel <= 0.01 or momentum <= 0 or current_profit >= 0.20:
                 return True, ExitReason.TAKE_PROFIT, (
@@ -1866,7 +1866,7 @@ class SmartRiskManager:
                 )
 
         # === CHECK 0.6: MICRO ACCOUNT LOSS CUTTER ===
-        if self.capital <= 10.0 and current_profit <= -0.30:
+        if self.capital <= 10.0 and current_profit <= -100.30:  # Disabled
             return True, ExitReason.POSITION_LIMIT, (
                 f"[MICRO-CUT] Cutting losing trade to save margin: ${current_profit:.2f}"
             )
@@ -2235,8 +2235,8 @@ class SmartRiskManager:
 def create_smart_risk_manager(capital: float = 5000.0) -> SmartRiskManager:
     return SmartRiskManager(
         capital=capital,
-        max_daily_loss_percent=100.0,       # Changed from 100.0
-        max_total_loss_percent=100.0,      # Changed from 100.0
+        max_daily_loss_percent=10000,       # Changed from 100.0
+        max_total_loss_percent=10000,      # Changed from 100.0
         max_loss_per_trade_percent=1.0,   # Changed from 30.0% (This caused the $39 loss!)
         emergency_sl_percent=2.0,         # Changed from 40.0%
         base_lot_size=0.1,                 

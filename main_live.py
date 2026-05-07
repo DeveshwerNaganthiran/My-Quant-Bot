@@ -1286,8 +1286,12 @@ class TradingBot:
             for row in open_positions.iter_rows(named=True):
                 ticket = row["ticket"]
                 profit = row.get("profit", 0)
+                
+                # --- FIX: Handle MT5 returning string values ---
                 position_type = row.get("type", 0)  
-                direction = "BUY" if position_type == 0 else "SELL"
+                direction = "BUY" if position_type in [0, "BUY", "Buy", "buy"] else "SELL"
+                # -----------------------------------------------
+                
                 lot_size = row.get("volume", 0.01)
 
                 if ticket in self._pyramid_done_tickets:
@@ -1811,7 +1815,7 @@ class TradingBot:
         session_mult = getattr(self, '_current_session_multiplier', 1.0)
         if session_mult < 1.0:
             original_lot = safe_lot
-            safe_lot = max(0.01, round(safe_lot * session_mult, 2))  
+            safe_lot = max(0.1, round(safe_lot * session_mult, 2))  
             sydney_mode = getattr(self, '_is_sydney_session', False)
             if sydney_mode:
                 logger.info(f"Sydney SAFE MODE: Lot {original_lot:.2f} -> {safe_lot:.2f} (0.5x)")
@@ -1820,10 +1824,10 @@ class TradingBot:
         is_night_hours = wib_hour >= 22 or wib_hour <= 5
         if is_night_hours:
             original_lot = safe_lot
-            safe_lot = max(0.01, round(safe_lot * 0.5, 2))  
+            safe_lot = max(0.1, round(safe_lot * 0.5, 2))  
             logger.warning(f"NIGHT SAFETY MODE: Lot {original_lot:.2f} -> {safe_lot:.2f} (0.5x) - WIB {wib_hour}:xx")
             
-        safe_lot = 0.01
+        # safe_lot = 0.01
 
         from dataclasses import dataclass
 
@@ -2443,8 +2447,11 @@ class TradingBot:
             profit = row.get("profit", 0)
             entry_price = row.get("price_open", current_price)
             lot_size = row.get("volume", 0.01)
+            
+            # --- FIX: Handle MT5 returning string values ---
             position_type = row.get("type", 0)  
-            direction = "BUY" if position_type == 0 else "SELL"
+            direction = "BUY" if position_type in [0, "BUY", "Buy", "buy"] else "SELL"
+            # -----------------------------------------------
 
             current_positions = self.mt5.get_open_positions(
                 symbol=self.config.symbol,

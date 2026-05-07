@@ -853,7 +853,7 @@ def get_trade_logger() -> TradeLogger:
     """Get or create global trade logger instance."""
     global _trade_logger
     if _trade_logger is None:
-        _trade_logger = TradeLogger()
+        _trade_logger = TradeLogger(use_db=False)  # <-- Disabled PostgreSQL
     return _trade_logger
 
 

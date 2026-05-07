@@ -181,8 +181,8 @@ class TradingConfig:
         max_leverage=100,
         max_positions=3,
         max_lot_size=0.5,
-        min_lot_size=0.01,
-        lot_step=0.01,
+        min_lot_size=0.1,
+        lot_step=0.1,
     ))
     smc: SMCConfig = field(default_factory=SMCConfig)
     ml: MLConfig = field(default_factory=MLConfig)
@@ -271,8 +271,8 @@ class TradingConfig:
             max_leverage=30,           
             max_positions=5,           
             max_lot_size=1.0,  # <-- Change this to 5.0
-            min_lot_size=0.01,
-            lot_step=0.01,
+            min_lot_size=0.1,
+            lot_step=0.1,
         )
         # Swing trading approach
         self.execution_timeframe = "M1"   # Longer timeframe

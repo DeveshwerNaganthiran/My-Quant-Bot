@@ -553,6 +553,26 @@ class SmartPositionManager:
             )
 
         # === TRAILING STOP CONDITIONS (ATR-adaptive #24B) ===
+        # === TRAILING STOP CONDITIONS (ATR-adaptive #24B) ===
+
+        # --- NEW: 30% TP BREAKEVEN FEATURE ---
+        if current_tp > 0 and entry_price > 0:
+            tp_distance_price = abs(current_tp - entry_price)
+            current_profit_price = (current_price - entry_price) if is_buy else (entry_price - current_price)
+            
+            if tp_distance_price > 0 and current_profit_price >= (0.30 * tp_distance_price):
+                five_percent_profit = 0.05 * tp_distance_price
+                new_be_sl = entry_price + five_percent_profit if is_buy else entry_price - five_percent_profit
+                
+                # Only move if the new SL is tighter than current SL
+                if current_sl == 0 or (is_buy and new_be_sl > current_sl) or (not is_buy and new_be_sl < current_sl):
+                    return PositionAction(
+                        ticket=ticket,
+                        action="TRAIL_SL",
+                        reason=f"TP 30% Reached -> SL moved to +5% Profit",
+                        new_sl=new_be_sl,
+                    )
+        # ------------------------------------
 
         # Compute adaptive levels from ATR (fall back to fixed pips if ATR unavailable)
         if current_atr is not None and current_atr > 0:
