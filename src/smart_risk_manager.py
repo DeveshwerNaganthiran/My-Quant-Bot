@@ -388,7 +388,9 @@ class SmartRiskManager:
         self.max_total_loss_percent = max_total_loss_percent
         self.max_total_loss_usd = capital * (max_total_loss_percent / 100)
         self.max_loss_per_trade_percent = max_loss_per_trade_percent
-        self.max_loss_per_trade = capital * (max_loss_per_trade_percent / 100)  # Software S/L in USD
+        # Force a minimum $3.00 SL so micro accounts don't get stopped out by the spread
+        calculated_loss = capital * (max_loss_per_trade_percent / 100)
+        self.max_loss_per_trade = max(3.00, calculated_loss)  # Software S/L in USD
         self.emergency_sl_percent = emergency_sl_percent
         self.emergency_sl_usd = capital * (emergency_sl_percent / 100)  # Broker S/L in USD
         self.base_lot_size = base_lot_size
@@ -730,10 +732,11 @@ class SmartRiskManager:
 
         # Check consecutive losses
         if self._state.consecutive_losses >= 3:
-            self._state.mode = TradingMode.RECOVERY
-            self._state.recommended_lot = self.recovery_lot_size
-            self._state.max_allowed_lot = self.base_lot_size
-            self._state.reason = f"{self._state.consecutive_losses} consecutive losses - recovery mode"
+            # Change RECOVERY mode to just stay in NORMAL mode or use base lot
+            self._state.mode = TradingMode.NORMAL # Or TradingMode.RECOVERY if you prefer the log label, but keep lot sizes normal
+            self._state.recommended_lot = self.base_lot_size # DO NOT USE recovery_lot_size
+            self._state.max_allowed_lot = self.base_lot_size # DO NOT USE max_lot_size
+            self._state.reason = f"{self._state.consecutive_losses} consecutive losses - playing it safe"
             self._state.can_trade = True
             return
 
@@ -1009,26 +1012,17 @@ class SmartRiskManager:
 
     def _calculate_fuzzy_exit_threshold(self, current_profit: float) -> float:
         """
-        FIX 1 (v0.1.1): Tiered fuzzy exit thresholds based on profit magnitude.
-
-        BEFORE: Fixed 90% threshold for all profits
-        AFTER: Dynamic thresholds:
-          - Micro (<$1): 70% -> exit early
-          - Small ($1-$3): 75% -> protection
-          - Medium ($3-$8): 85% -> hold longer
-          - Large (>$8): 90% -> maximize
-
-        Returns threshold value 0.0-1.0
+        Tiered fuzzy exit thresholds based on profit magnitude.
         """
-        if current_profit < 1.0:
-            return 0.70  # Micro: exit early
-        elif current_profit < 3.0:
-            return 0.75  # Small: protect
+        if current_profit < 2.0:
+            return 0.95  # FORCE HOLD: Ignore noise on micro profits
+        elif current_profit < 5.0:
+            return 0.90  # Medium protection
         elif current_profit < 8.0:
-            return 0.85  # Medium: hold
+            return 0.85  # Normal holding
         else:
-            return 0.90  # Large: maximize
-
+            return 0.90  # Maximize
+        
     def _predict_trajectory_calibrated(
         self,
         current_profit: float,
@@ -1485,19 +1479,8 @@ class SmartRiskManager:
 
                         # Partial exit: Kelly suggests 30-70% close
                         if should_exit and 0.3 <= close_fraction < 1.0:
-                            logger.warning(
-                                f"[KELLY PARTIAL] Recommendation: {kelly_msg} "
-                                f"(profit=${current_profit:.2f}, fuzzy={exit_confidence:.2%}) "
-                                f"[NOTE: Partial close not yet implemented - recommend manual close {close_fraction:.0%}]"
-                            )
-                            # TODO: Implement actual partial close via mt5.close_position(ticket, volume=lot*close_fraction)
-                            # For now, continue to full exit logic below
-
-                        # Full exit: Kelly suggests >70% close
-                        elif should_exit and close_fraction >= 0.70:
-                            return True, ExitReason.TAKE_PROFIT, (
-                                f"[KELLY FULL EXIT] {kelly_msg} (fuzzy={exit_confidence:.2%})"
-                            )
+                            # REMOVE the logger.warning and TODO, replace with:
+                            return True, ExitReason.TAKE_PROFIT, f"TAKE_PARTIAL:{close_fraction:.2f}"
 
                 else:
                     # === LOSS TRADES: Exit faster to minimize damage ===
@@ -1542,24 +1525,19 @@ class SmartRiskManager:
 
         # === PRIORITY 0: EMERGENCY SAFETY CHECKS ===
 
-        # 1. THE "NEVER GO RED" SHIELD (Upgraded to $1.50 Rule)
-        # We must clear the spread first. Once profit hits $1.50, DO NOT let it go red.
-        # Exit at +$0.20 if it crashes.
-        if guard.peak_profit >= 1.50 and current_profit <= 0.20:
+        # 1. THE "NEVER GO RED" SHIELD (Upgraded to allow breathing room)
+        # Gold needs room. Only shield if it reached a real peak ($4.00+).
+        if guard.peak_profit >= 4.00 and current_profit <= 1.00:
             return True, ExitReason.TAKE_PROFIT, f"[NEVER-GO-RED] Secured Breakeven (+${current_profit:.2f}). Peak was ${guard.peak_profit:.2f}"
-        # 2. AGGRESSIVE TIERED PROFIT SHIELDS
-        # Lock in the highest possible profit without letting it fall back to Breakeven
-        if guard.peak_profit >= 10.00 and current_profit <= guard.peak_profit * 0.90:
-            return True, ExitReason.TAKE_PROFIT, f"[PROFIT-SHIELD-MAX] Secured 90% of peak! Exit at ${current_profit:.2f} (peak was ${guard.peak_profit:.2f})"
+        # 2. RELAXED PROFIT SHIELDS (Let the trades breathe!)
+        # Lock in profit only on substantial peaks, not normal market noise
+        if guard.peak_profit >= 15.00 and current_profit <= guard.peak_profit * 0.80:
+            return True, ExitReason.TAKE_PROFIT, f"[PROFIT-SHIELD-MAX] Secured 80% of peak! Exit at ${current_profit:.2f} (peak was ${guard.peak_profit:.2f})"
             
-        elif guard.peak_profit >= 5.00 and current_profit <= guard.peak_profit * 0.85:
-            return True, ExitReason.TAKE_PROFIT, f"[PROFIT-SHIELD-HIGH] Secured 85% of peak! Exit at ${current_profit:.2f} (peak was ${guard.peak_profit:.2f})"
+        elif guard.peak_profit >= 8.00 and current_profit <= guard.peak_profit * 0.70:
+            return True, ExitReason.TAKE_PROFIT, f"[PROFIT-SHIELD-HIGH] Secured 70% of peak! Exit at ${current_profit:.2f} (peak was ${guard.peak_profit:.2f})"
             
-        elif guard.peak_profit >= 2.00 and current_profit <= guard.peak_profit * 0.70:
-            return True, ExitReason.TAKE_PROFIT, f"[PROFIT-SHIELD-MED] Secured 70% of peak! Exit at ${current_profit:.2f} (peak was ${guard.peak_profit:.2f})"
-            
-        elif guard.peak_profit >= 1.00 and current_profit <= guard.peak_profit * 0.50:
-            return True, ExitReason.TAKE_PROFIT, f"[PROFIT-SHIELD-MIN] Secured 50% of peak! Exit at ${current_profit:.2f} (peak was ${guard.peak_profit:.2f})"
+        # We removed the $2.00 and $1.00 shields entirely. Let small profits grow!
 
 
         # CHECK -1: NO RECOVERY ZONE 
@@ -1871,11 +1849,12 @@ class SmartRiskManager:
                 f"[MICRO-CUT] Cutting losing trade to save margin: ${current_profit:.2f}"
             )
         
-        # === NEW FIX: EARLY MOMENTUM FADE (Don't let $1-$2 profits turn into losses!) ===
-        # If we have at least $0.50 profit, but the market suddenly crashes against us
-        if 0.50 <= current_profit < tp_min:
+     
+       # === NEW FIX: EARLY MOMENTUM FADE (Relaxed) ===
+        # Only panic if we have a decent profit ($3.00+), ignore noise under $3
+        if 3.00 <= current_profit < tp_min:
             # If velocity drops hard (candle is reversing rapidly)
-            if _vel < -0.15 or (guard.velocity_was_positive and _vel < -0.05 and guard.decel_at_profit_count >= 2):
+            if _vel < -0.25 or (guard.velocity_was_positive and _vel < -0.15 and guard.decel_at_profit_count >= 2):
                 return True, ExitReason.TAKE_PROFIT, (
                     f"[EARLY-FADE] Securing ${current_profit:.2f} before it becomes a loss! "
                     f"(vel={_vel:.3f}, peak=${guard.peak_profit:.2f})"
@@ -1947,10 +1926,10 @@ class SmartRiskManager:
         # === CHECK 2: SMART EARLY EXIT (small profit, scaled) ===
         # v4: DISABLED — taking small profits prevents reaching $10+ targets
         # Only the ML reversal + high confidence check remains, with higher bar
-        if tp_early_min <= current_profit < tp_small_max:
-            # Re-enabled early exit for micro accounts: Take the small profit if momentum fades
-            if momentum < -20 and trade_age_minutes >= 2:
-                return True, ExitReason.TAKE_PROFIT, f"[EARLY] Securing early micro profit ${current_profit:.2f}"
+        # if tp_early_min <= current_profit < tp_small_max:
+        #     # Re-enabled early exit for micro accounts: Take the small profit if momentum fades
+        #     if momentum < -20 and trade_age_minutes >= 2:
+        #         return True, ExitReason.TAKE_PROFIT, f"[EARLY] Securing early micro profit ${current_profit:.2f}"
                 # is_reversal = (
                 #     (guard.direction == "BUY" and ml_signal == "SELL") or
                 #     (guard.direction == "SELL" and ml_signal == "BUY")
@@ -2035,15 +2014,22 @@ class SmartRiskManager:
                 return True, ExitReason.TREND_REVERSAL, f"[WARN] {guard.reversal_warnings}x reversal warnings - Loss: ${current_profit:.2f}"
 
         # === CHECK 5: ABSOLUTE BACKUP STOP (dynamic safety net) ===
-        # v5d: BACKUP-SL now respects grace period (was firing at 1-2 min!)
-        # Also uses loss_mult floor of 0.8 so ML disagreement can't crush threshold
-        # to $4-5 (which fires on normal gold noise within seconds).
-        backup_loss_mult = max(0.7, loss_mult)  # v6: relaxed 0.8->0.7 (ML fix makes band-aid unnecessary)
-        backup_pct = min(0.60, 0.50 * backup_loss_mult)  # Allows ~$5.00 of breathing room instead of $2.00
-        if trade_age_minutes >= grace_minutes and current_profit <= -(effective_max_loss * backup_pct):
+        # v5d: BACKUP-SL now respects grace period.
+        backup_loss_mult = max(0.7, loss_mult)
+        backup_pct = min(0.60, 0.50 * backup_loss_mult)
+        
+        # Calculate the backup stop amount
+        backup_stop_amount = effective_max_loss * backup_pct
+        
+        # CRITICAL FIX FOR MICRO ACCOUNTS:
+        # Never trigger the backup stop if the loss is less than $2.00!
+        # $0.18 is just spread noise in Gold.
+        backup_stop_amount = max(2.00, backup_stop_amount)
+
+        if trade_age_minutes >= grace_minutes and current_profit <= -backup_stop_amount:
             return True, ExitReason.POSITION_LIMIT, (
-                f"[BACKUP-SL] Loss ${abs(current_profit):.2f} ({backup_pct:.0%} of "
-                f"${effective_max_loss:.2f}) — safety net [{regime}|L×{backup_loss_mult:.1f}]"
+                f"[BACKUP-SL] Loss ${abs(current_profit):.2f} exceeded "
+                f"${backup_stop_amount:.2f} minimum threshold — safety net [{regime}|L×{backup_loss_mult:.1f}]"
             )
 
         # === CHECK 5b: STALL DETECTION (ATR-scaled) ===
@@ -2238,12 +2224,12 @@ def create_smart_risk_manager(capital: float = 5000.0) -> SmartRiskManager:
         max_daily_loss_percent=10000,       # Changed from 100.0
         max_total_loss_percent=10000,      # Changed from 100.0
         max_loss_per_trade_percent=1.0,   # Changed from 30.0% (This caused the $39 loss!)
-        emergency_sl_percent=2.0,         # Changed from 40.0%
-        base_lot_size=0.1,                 
-        max_lot_size=0.5,                  
-        recovery_lot_size=0.1,               
+        emergency_sl_percent=2.0,   
+        max_lot_size=6.0,       # Changed from 40.0%
+        base_lot_size=1,                     
+        recovery_lot_size=1,               
         trend_reversal_threshold=0.65,      
-        max_concurrent_positions=2,         
+        max_concurrent_positions=20,         
     )
 
 

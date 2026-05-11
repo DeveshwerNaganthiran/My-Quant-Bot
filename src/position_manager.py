@@ -276,7 +276,7 @@ class SmartPositionManager:
         max_drawdown_from_peak: float = 15.0,  
         # ATR-adaptive exit multipliers
         atr_be_mult: float = 0.5,          # Changed from 1.0: Trigger BE at 0.2 ATR          # Was 2.0 (Breakeven triggers at 1.0 ATR)
-        atr_trail_start_mult: float = 1.0, # Was 4.0 (Trail starts at 2.0 ATR)
+        atr_trail_start_mult: float = 1.2, # Was 4.0 (Trail starts at 2.0 ATR)
         atr_trail_step_mult: float = 0.5,  # Was 3.0
         # Market Close Handler settings
         enable_market_close_handler: bool = True,
@@ -552,26 +552,42 @@ class SmartPositionManager:
                 reason=f"High urgency exit (score: {market['urgency']}) - Securing ${profit:.2f}",
             )
 
-        # === TRAILING STOP CONDITIONS (ATR-adaptive #24B) ===
-        # === TRAILING STOP CONDITIONS (ATR-adaptive #24B) ===
-
-        # --- NEW: 30% TP BREAKEVEN FEATURE ---
+        # --- NEW: MULTI-TIERED TP BREAKEVEN & TRAILING ---
         if current_tp > 0 and entry_price > 0:
             tp_distance_price = abs(current_tp - entry_price)
             current_profit_price = (current_price - entry_price) if is_buy else (entry_price - current_price)
             
-            if tp_distance_price > 0 and current_profit_price >= (0.30 * tp_distance_price):
-                five_percent_profit = 0.05 * tp_distance_price
-                new_be_sl = entry_price + five_percent_profit if is_buy else entry_price - five_percent_profit
-                
-                # Only move if the new SL is tighter than current SL
-                if current_sl == 0 or (is_buy and new_be_sl > current_sl) or (not is_buy and new_be_sl < current_sl):
-                    return PositionAction(
-                        ticket=ticket,
-                        action="TRAIL_SL",
-                        reason=f"TP 30% Reached -> SL moved to +5% Profit",
-                        new_sl=new_be_sl,
-                    )
+            if tp_distance_price > 0:
+                progress_pct = current_profit_price / tp_distance_price
+                lock_in_pct = 0.0
+                tier_name = ""
+
+                # Evaluate from highest tier to lowest
+                if progress_pct >= 0.80:
+                    lock_in_pct = 0.55  # Lock 55% of TP, give 25% breathing room
+                    tier_name = "80%"
+                elif progress_pct >= 0.60:
+                    lock_in_pct = 0.35  # Lock 35% of TP, give 25% breathing room
+                    tier_name = "60%"
+                elif progress_pct >= 0.40:
+                    lock_in_pct = 0.15  # Lock 15% of TP, give 25% breathing room
+                    tier_name = "40%"
+                elif progress_pct >= 0.20:
+                    lock_in_pct = 0.02  # Pure Breakeven + spread fees (2% of TP)
+                    tier_name = "20%"
+
+                if lock_in_pct > 0.0:
+                    lock_distance = lock_in_pct * tp_distance_price
+                    new_be_sl = entry_price + lock_distance if is_buy else entry_price - lock_distance
+                    
+                    # Only move if the new SL is tighter (more profitable) than current SL
+                    if current_sl == 0 or (is_buy and new_be_sl > current_sl) or (not is_buy and new_be_sl < current_sl):
+                        return PositionAction(
+                            ticket=ticket,
+                            action="TRAIL_SL",
+                            reason=f"TP {tier_name} Reached -> SL moved to lock {lock_in_pct*100:.0f}% of TP",
+                            new_sl=new_be_sl,
+                        )
         # ------------------------------------
 
         # Compute adaptive levels from ATR (fall back to fixed pips if ATR unavailable)
@@ -658,6 +674,17 @@ class SmartPositionManager:
             if action.action == "HOLD":
                 result["success"] = True
                 result["message"] = action.reason
+
+            elif action.action.startswith("TAKE_PARTIAL"):
+                # Extract the fraction to close
+                close_fraction = float(action.action.split(":")[1])
+                position = mt5.positions_get(ticket=action.ticket)[0]
+                partial_volume = round(position.volume * close_fraction, 2)
+                
+                if partial_volume >= 0.01: # Ensure minimum lot size
+                    close_result = self._close_position(action.ticket, volume=partial_volume) # You will need to update _close_position to accept a volume parameter
+                    result["success"] = close_result["success"]
+                    result["message"] = f"Partially closed {partial_volume} lots"
 
             elif action.action == "CLOSE":
                 close_result = self._close_position(action.ticket)

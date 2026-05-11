@@ -115,9 +115,11 @@ def hourly_retrain():
         max_up = future_window.max() - current_price
         max_down = current_price - future_window.min()
         
-        if max_up >= 2.0 and max_down < 1.0:
+        # DEMAND A STRONGER TREND: 
+        # Price must push $4.00 in our direction, and barely pull back against us.
+        if max_up >= 4.0 and max_down < 1.5:
             labels.append(1) # Clean BUY success
-        elif max_down >= 2.0 and max_up < 1.0:
+        elif max_down >= 4.0 and max_up < 1.5:
             labels.append(0) # Clean SELL success
         else:
             labels.append(-1) # Choppy market / Whipsaw

@@ -122,15 +122,15 @@ class TradingBot:
         self._h1_df_cached = None 
 
         self.position_manager = SmartPositionManager(
-            breakeven_pips=12.0,       
-            trail_start_pips=20.0,     
-            trail_step_pips=10.0,      
-            atr_be_mult=1.0,           
-            atr_trail_start_mult=1.5,  
-            atr_trail_step_mult=0.5,   
+            breakeven_pips=150.0,       
+            trail_start_pips=250.0,     
+            trail_step_pips=50.0,      
+            atr_be_mult=2.0,           
+            atr_trail_start_mult=2.5,  
+            atr_trail_step_mult=1.5,   
             min_profit_to_protect=10.0,
-            max_drawdown_from_peak=20.0,  
-            enable_market_close_handler=True,
+            max_drawdown_from_peak=50.0,  
+            enable_market_close_handler=False,
             min_profit_before_close=3.0,
             max_loss_to_hold=2.0,
         )
@@ -188,7 +188,8 @@ class TradingBot:
         self._dash_status_file = Path("data/bot_status.json")
 
         self._restore_dashboard_state()
-        self._forced_next_direction = self._load_forced_direction()
+        # self._forced_next_direction = self._load_forced_direction()
+        self._forced_next_direction = None # Force disabled
     
     def _load_forced_direction(self):
         """Loads the last forced direction from file."""
@@ -1155,14 +1156,8 @@ class TradingBot:
                 self.smart_risk.record_trade_result(last_profit)
                 
                 # ---> WIN/LOSS ALTERNATOR LOGIC (Broker Close) <---
-                if last_profit > 0:
-                    self._forced_next_direction = trade_dir
-                    logger.warning(f"🟢 Trade WON (+${last_profit:.2f}). Next trade stays {self._forced_next_direction}!")
-                else:
-                    self._forced_next_direction = "BUY" if trade_dir == "SELL" else "SELL"
-                    logger.warning(f"🔴 Trade LOST (${last_profit:.2f}). Next trade FLIPS to {self._forced_next_direction}!")
-                    
-                self._save_forced_direction(self._forced_next_direction)
+                # DISABLED: Bot will now trade its natural signals
+                self._forced_next_direction = None
                 # --------------------------------------------------
                 
                 self.smart_risk.unregister_position(ticket)
@@ -1640,7 +1635,7 @@ class TradingBot:
                 logger.info(f"Session filter: {session_reason}")
                 next_window = self.session_filter.get_next_trading_window()
                 logger.info(f"Next trading window: {next_window['session']} in {next_window['hours_until']} hours")
-            return
+            #return
 
         self._current_session_multiplier = session_multiplier
         self._is_sydney_session = "Sydney" in session_reason or session_multiplier == 0.5
@@ -1795,22 +1790,22 @@ class TradingBot:
             logger.debug("Smart Risk: Lot size is 0 (Trade Rejected) - skipping trade")
             return
 
-        # === ADAPTIVE CANDLE BEHAVIOR FILTER ===
+        # # === ADAPTIVE CANDLE BEHAVIOR FILTER ===
         current_open = df["open"].tail(1).item()
         
-        if self._forced_next_direction == "BUY" and current_price > current_open:
-            logger.info(f"Candle Behavior: BUY blocked - Candle is currently GREEN (Forced BUY expects RED). Open: {current_open:.2f}, Price: {current_price:.2f}")
-            return
-        elif self._forced_next_direction == "SELL" and current_price < current_open:
-            logger.info(f"Candle Behavior: SELL blocked - Candle is currently RED (Forced SELL expects GREEN). Open: {current_open:.2f}, Price: {current_price:.2f}")
-            return
-        elif not self._forced_next_direction:
-            if final_signal.signal_type == "BUY" and current_price < current_open:
-                logger.info(f"Candle Behavior: BUY blocked - Candle is currently RED. Open: {current_open:.2f}, Price: {current_price:.2f}")
-                return
-            elif final_signal.signal_type == "SELL" and current_price > current_open:
-                logger.info(f"Candle Behavior: SELL blocked - Candle is currently GREEN. Open: {current_open:.2f}, Price: {current_price:.2f}")
-                return
+        # if self._forced_next_direction == "BUY" and current_price > current_open:
+        #     logger.info(f"Candle Behavior: BUY blocked - Candle is currently GREEN (Forced BUY expects RED). Open: {current_open:.2f}, Price: {current_price:.2f}")
+        #     return
+        # elif self._forced_next_direction == "SELL" and current_price < current_open:
+        #     logger.info(f"Candle Behavior: SELL blocked - Candle is currently RED (Forced SELL expects GREEN). Open: {current_open:.2f}, Price: {current_price:.2f}")
+        #     return
+        # elif not self._forced_next_direction:
+        #     if final_signal.signal_type == "BUY" and current_price < current_open:
+        #         logger.info(f"Candle Behavior: BUY blocked - Candle is currently RED. Open: {current_open:.2f}, Price: {current_price:.2f}")
+        #         return
+        #     elif final_signal.signal_type == "SELL" and current_price > current_open:
+        #         logger.info(f"Candle Behavior: SELL blocked - Candle is currently GREEN. Open: {current_open:.2f}, Price: {current_price:.2f}")
+        #         return
 
         session_mult = getattr(self, '_current_session_multiplier', 1.0)
         if session_mult < 1.0:
@@ -1852,12 +1847,38 @@ class TradingBot:
         can_open, limit_reason = self.smart_risk.can_open_position()
         self._last_filter_results.append({"name": "Position Limit", "passed": can_open, "detail": limit_reason if not can_open else "OK"})
 
+        # --- BULLETPROOF HEDGING & STACKING PREVENTION ---
+        opposite_dir_count = 0
+        same_dir_count = 0
+        
+        for p in open_positions.iter_rows(named=True):
+            p_type = p.get("type", 0)
+            is_p_buy = p_type in [0, "BUY", "Buy", "buy"]
+            is_signal_buy = final_signal.signal_type == "BUY"
+            
+            if is_p_buy == is_signal_buy:
+                same_dir_count += 1
+            else:
+                opposite_dir_count += 1
+
+        # 1. Prevent Hedging (Mixed Buy/Sell)
+        if opposite_dir_count > 0:
+            logger.warning(f"Hedging Prevention: Already holding opposite trades. Skipping {final_signal.signal_type} entry until cleared.")
+            return
+            
+        # 2. Prevent Over-Stacking (Pyramiding Limit)
+        if same_dir_count >= self.smart_risk.max_concurrent_positions:
+            logger.warning(f"Stacking Prevention: Max positions ({self.smart_risk.max_concurrent_positions}) reached for {final_signal.signal_type}. Skipping new entry.")
+            return
+        # -------------------------------------------------
+
         current_type = 0 if final_signal.signal_type == "BUY" else 1
         same_dir_count = sum(1 for p in open_positions.iter_rows(named=True) if p.get("type", -1) == current_type)
         
-        if same_dir_count >= 1:
-            logger.warning(f"Stacking Prevention: Already holding a {final_signal.signal_type} position. Skipping new entry.")
-            return
+        # Allow multiple trades up to max limit (for pyramiding)
+        if same_dir_count >= self.smart_risk.max_concurrent_positions:
+            logger.warning(f"Stacking Prevention: Max positions ({self.smart_risk.max_concurrent_positions}) reached for {final_signal.signal_type}. Skipping new entry.")
+            return  
 
         await self._execute_trade_safe(final_signal, position_result, regime_state)
     
@@ -1905,13 +1926,13 @@ class TradingBot:
 
         if market_analysis.quality.value == "avoid":
             if self._loop_count % 120 == 0:
-                logger.info(f"Skip: Market quality AVOID - tidak entry")
-            return None
+                logger.info(f"Skip: Market quality AVOID - BUT FORCING TRADE")
+            # return None   <--- COMMENT THIS OUT
 
         if regime_state and regime_state.regime == MarketRegime.CRISIS:
             if self._loop_count % 120 == 0:
-                logger.info(f"Skip: CRISIS regime - tidak entry")
-            return None
+                logger.info(f"Skip: CRISIS regime - BUT FORCING TRADE")
+            # return None   <--- COMMENT THIS OUT
 
         is_london = session_name == "London"
         atr_ratio = 1.0
@@ -2539,14 +2560,8 @@ class TradingBot:
                     risk_result = self.smart_risk.record_trade_result(profit)
                     
                     # ---> WIN/LOSS ALTERNATOR LOGIC (Normal Close) <---
-                    if profit > 0:
-                        self._forced_next_direction = direction
-                        logger.warning(f"🟢 Trade WON (+${profit:.2f}). Next trade stays {self._forced_next_direction}!")
-                    else:
-                        self._forced_next_direction = "BUY" if direction == "SELL" else "SELL"
-                        logger.warning(f"🔴 Trade LOST (${profit:.2f}). Next trade FLIPS to {self._forced_next_direction}!")
-                        
-                    self._save_forced_direction(self._forced_next_direction)
+                    # DISABLED: Bot will now trade its natural signals
+                    self._forced_next_direction = None
                     # --------------------------------------------------
 
                     self.smart_risk.unregister_position(ticket)

@@ -177,7 +177,7 @@ class TradingConfig:
     # Sub-configurations
     risk: RiskConfig = field(default_factory=lambda: RiskConfig(
         risk_per_trade=1.5,
-        max_daily_loss=3.0,
+        max_daily_loss=100.0,
         max_leverage=100,
         max_positions=3,
         max_lot_size=0.5,
@@ -248,7 +248,7 @@ class TradingConfig:
         """
         self.risk = RiskConfig(
             risk_per_trade=15.0,       # High % needed for $1.12 account
-            max_daily_loss=1.0,       # Allow 50% daily loss for testing
+            max_daily_loss=100.0,      # Allow 100% daily loss for testing
             max_leverage=1000,         # Adjust to your XM leverage
             max_positions=5,           # Increased from 3 to 5
             max_lot_size=5.0,          
@@ -267,7 +267,7 @@ class TradingConfig:
         """
         self.risk = RiskConfig(
             risk_per_trade=0.5,        
-            max_daily_loss=2.0,        
+            max_daily_loss=100.0,        
             max_leverage=30,           
             max_positions=5,           
             max_lot_size=1.0,  # <-- Change this to 5.0
