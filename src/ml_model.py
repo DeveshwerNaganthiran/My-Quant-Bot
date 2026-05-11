@@ -66,21 +66,21 @@ class TradingModel:
         self.confidence_threshold = confidence_threshold
         self.model_path = Path(model_path) if model_path else None
         
-        # Balanced XGBoost parameters - Prevents 99% memorization
+        # Strictly Regularized XGBoost parameters - Stops Overfitting
         self.params = params or {
             "objective": "binary:logistic",
             "eval_metric": "auc",
-            "max_depth": 6,            # INCREASED from 4 (allows it to see W + MACD + Choch simultaneously)
-            "learning_rate": 0.01,     # DECREASED from 0.05 (slower learning = higher final accuracy)
+            "max_depth": 3,            # FIXED: Keep trees shallow to prevent curve-fitting
+            "learning_rate": 0.05,     # FIXED: Increased slightly to balance shallower trees
             "tree_method": "hist",
             "device": "cpu",
-            "min_child_weight": 3,     # DECREASED from 5 (allows it to learn slightly rarer patterns)
-            "subsample": 0.8,          # INCREASED from 0.7 
-            "colsample_bytree": 0.8,   # INCREASED from 0.7
-            "reg_alpha": 0.1,          # LOWERED L1 penalty
-            "reg_lambda": 1.0,         # LOWERED L2 penalty
-            "gamma": 0.1,              # LOWERED minimum loss reduction
-            "scale_pos_weight": 1.0    # (This gets dynamically updated in the fit function anyway)
+            "min_child_weight": 50,    # FIXED: Require at least 50 samples to make a rule (Kills noise)
+            "subsample": 0.8,          
+            "colsample_bytree": 0.8,   
+            "reg_alpha": 0.5,          # FIXED: Increased L1 penalty to drop useless features
+            "reg_lambda": 2.0,         # FIXED: Increased L2 penalty for smoother weights
+            "gamma": 1.0,              # FIXED: Require massive loss reduction to split
+            "scale_pos_weight": 1.0    
         }
         
         self.model: Optional[xgb.Booster] = None
