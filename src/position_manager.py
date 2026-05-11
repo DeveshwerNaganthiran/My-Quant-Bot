@@ -572,9 +572,6 @@ class SmartPositionManager:
                 elif progress_pct >= 0.40:
                     lock_in_pct = 0.15  # Lock 15% of TP, give 25% breathing room
                     tier_name = "40%"
-                elif progress_pct >= 0.20:
-                    lock_in_pct = 0.02  # Pure Breakeven + spread fees (2% of TP)
-                    tier_name = "20%"
 
                 if lock_in_pct > 0.0:
                     lock_distance = lock_in_pct * tp_distance_price
