@@ -1155,9 +1155,15 @@ class TradingBot:
                 logger.info(f"Position #{ticket} closed by Broker S/L or T/P. Profit: ${last_profit:.2f}")
                 self.smart_risk.record_trade_result(last_profit)
                 
-                # ---> WIN/LOSS ALTERNATOR LOGIC (Broker Close) <---
-                # DISABLED: Bot will now trade its natural signals
-                self._forced_next_direction = None
+                # ---> WIN/LOSS ALTERNATOR LOGIC <---
+                if last_profit > 0: # <--- CHANGED to last_profit
+                    self._forced_next_direction = None 
+                    logger.warning(f"🟢 Trade WON (+${last_profit:.2f}). AI will decide next trade!")
+                else:
+                    self._forced_next_direction = None
+                    logger.warning(f"🔴 Trade LOST (${last_profit:.2f}). AI will decide next trade!")
+                    
+                self._save_forced_direction("") 
                 # --------------------------------------------------
                 
                 self.smart_risk.unregister_position(ticket)
@@ -1810,7 +1816,7 @@ class TradingBot:
         session_mult = getattr(self, '_current_session_multiplier', 1.0)
         if session_mult < 1.0:
             original_lot = safe_lot
-            safe_lot = max(0.1, round(safe_lot * session_mult, 2))  
+            safe_lot = max(0.05, round(safe_lot * session_mult, 2))  
             sydney_mode = getattr(self, '_is_sydney_session', False)
             if sydney_mode:
                 logger.info(f"Sydney SAFE MODE: Lot {original_lot:.2f} -> {safe_lot:.2f} (0.5x)")
@@ -1819,7 +1825,7 @@ class TradingBot:
         is_night_hours = wib_hour >= 22 or wib_hour <= 5
         if is_night_hours:
             original_lot = safe_lot
-            safe_lot = max(0.1, round(safe_lot * 0.5, 2))  
+            safe_lot = max(0.05, round(safe_lot * 0.5, 2))  
             logger.warning(f"NIGHT SAFETY MODE: Lot {original_lot:.2f} -> {safe_lot:.2f} (0.5x) - WIB {wib_hour}:xx")
             
         # safe_lot = 0.01
@@ -2004,7 +2010,7 @@ class TradingBot:
             ml_is_neutral = 0.35 <= prob < 0.65
 
             if ml_is_neutral:
-                if smc_conf >= 0.60:
+                if smc_conf >= 0.70:
                     combined_confidence = smc_conf * 0.90 
                     reason_suffix = f" | AI NEUTRAL ({prob:.1%}) -> Trusting SMC"
                     logger.info(f"⚖️ AI Neutral ({prob:.1%}). Trusting SMC {smc_signal.signal_type} ({smc_conf:.0%}).")
@@ -2254,7 +2260,7 @@ class TradingBot:
         current_price = tick.bid if signal.signal_type == "SELL" else tick.ask
 
         # The minimum distance in points the SL must be from the current price
-        min_sl_distance = 2.0  
+        min_sl_distance = 4.0  
 
         # --- BULLETPROOF STOP LOSS FIX ---
         if signal.signal_type == "BUY":
@@ -2573,9 +2579,15 @@ class TradingBot:
 
                     risk_result = self.smart_risk.record_trade_result(profit)
                     
-                    # ---> WIN/LOSS ALTERNATOR LOGIC (Normal Close) <---
-                    # DISABLED: Bot will now trade its natural signals
-                    self._forced_next_direction = None
+                    # ---> WIN/LOSS ALTERNATOR LOGIC <---
+                    if profit > 0:
+                        self._forced_next_direction = None # <--- CHANGE TO None
+                        logger.warning(f"🟢 Trade WON (+${profit:.2f}). AI will decide next trade!")
+                    else:
+                        self._forced_next_direction = None # <--- CHANGE TO None
+                        logger.warning(f"🔴 Trade LOST (${profit:.2f}). AI will decide next trade!")
+                        
+                    self._save_forced_direction("") # <--- CLEAR THE FILE
                     # --------------------------------------------------
 
                     self.smart_risk.unregister_position(ticket)

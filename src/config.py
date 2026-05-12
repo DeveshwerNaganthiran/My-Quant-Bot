@@ -181,8 +181,8 @@ class TradingConfig:
         max_leverage=100,
         max_positions=3,
         max_lot_size=0.5,
-        min_lot_size=0.1,
-        lot_step=0.1,
+        min_lot_size=0.05,
+        lot_step=0.05,
     ))
     smc: SMCConfig = field(default_factory=SMCConfig)
     ml: MLConfig = field(default_factory=MLConfig)
@@ -252,11 +252,11 @@ class TradingConfig:
             max_leverage=1000,         # Adjust to your XM leverage
             max_positions=5,           # Increased from 3 to 5
             max_lot_size=5.0,          
-            min_lot_size=0.1,          # Micro account minimum lot
-            lot_step=0.1,              # Micro account lot step
+            min_lot_size=0.05,#0.1          # Micro account minimum lot
+            lot_step=0.05,#0.1              # Micro account lot step
             use_equity_scaling=True,
             equity_step=1.0,           # Every $1 in the account...
-            lot_per_step=0.1           # ...adds 0.1 lots
+            lot_per_step=0.05#0.1           # ...adds 0.1 lots
         )
         self.execution_timeframe = "M1"  # Scalping/day trading
         
@@ -271,8 +271,8 @@ class TradingConfig:
             max_leverage=30,           
             max_positions=5,           
             max_lot_size=1.0,  # <-- Change this to 5.0
-            min_lot_size=0.1,
-            lot_step=0.1,
+            min_lot_size=0.05,
+            lot_step=0.05,
         )
         # Swing trading approach
         self.execution_timeframe = "M1"   # Longer timeframe
