@@ -1740,18 +1740,18 @@ class SmartRiskManager:
         # Detect when profit velocity transitions from positive to negative.
         # This catches the exact moment momentum fades — before big drawdown.
         # Example: Trade peaked $7.58, velocity was +0.05, now -0.03 -> fading
-        if current_profit >= tp_min and trade_age_minutes >= 3:
-            # Velocity was positive and now turned negative (momentum fading)
-            # v6: uses Kalman-filtered velocity for trigger, raw for counter tracking
-            if guard.velocity_was_positive and _vel < -0.01:
-                # Require multiple deceleration readings to avoid false triggers
-                if guard.decel_at_profit_count >= 3 or guard.velocity_sign_flips >= 2:
-                    fade_strength = "strong" if _vel < -0.05 else "moderate"
-                    return True, ExitReason.TAKE_PROFIT, (
-                        f"[MOM-FADE] Securing ${current_profit:.2f} — momentum fading ({fade_strength}) "
-                        f"vel={_vel:.3f} decel={guard.decel_at_profit_count}x "
-                        f"flips={guard.velocity_sign_flips} peak=${guard.peak_profit:.2f}"
-                    )
+        # if current_profit >= tp_min and trade_age_minutes >= 3:
+        #     # Velocity was positive and now turned negative (momentum fading)
+        #     # v6: uses Kalman-filtered velocity for trigger, raw for counter tracking
+        #     if guard.velocity_was_positive and _vel < -0.01:
+        #         # Require multiple deceleration readings to avoid false triggers
+        #         if guard.decel_at_profit_count >= 3 or guard.velocity_sign_flips >= 2:
+        #             fade_strength = "strong" if _vel < -0.05 else "moderate"
+        #             return True, ExitReason.TAKE_PROFIT, (
+        #                 f"[MOM-FADE] Securing ${current_profit:.2f} — momentum fading ({fade_strength}) "
+        #                 f"vel={_vel:.3f} decel={guard.decel_at_profit_count}x "
+        #                 f"flips={guard.velocity_sign_flips} peak=${guard.peak_profit:.2f}"
+        #             )
 
         # === CHECK 0D: CAN'T MAKE NEW HIGHS ===
         # Detect when trade has profit but can't push to new peaks.
@@ -1850,15 +1850,15 @@ class SmartRiskManager:
             )
         
      
-       # === NEW FIX: EARLY MOMENTUM FADE (Relaxed) ===
-        # Only panic if we have a decent profit ($3.00+), ignore noise under $3
-        if 3.00 <= current_profit < tp_min:
-            # If velocity drops hard (candle is reversing rapidly)
-            if _vel < -0.25 or (guard.velocity_was_positive and _vel < -0.15 and guard.decel_at_profit_count >= 2):
-                return True, ExitReason.TAKE_PROFIT, (
-                    f"[EARLY-FADE] Securing ${current_profit:.2f} before it becomes a loss! "
-                    f"(vel={_vel:.3f}, peak=${guard.peak_profit:.2f})"
-                )
+    #    # === NEW FIX: EARLY MOMENTUM FADE (Relaxed) ===
+    #     # Only panic if we have a decent profit ($3.00+), ignore noise under $3
+    #     if 3.00 <= current_profit < tp_min:
+    #         # If velocity drops hard (candle is reversing rapidly)
+    #         if _vel < -0.25 or (guard.velocity_was_positive and _vel < -0.15 and guard.decel_at_profit_count >= 2):
+    #             return True, ExitReason.TAKE_PROFIT, (
+    #                 f"[EARLY-FADE] Securing ${current_profit:.2f} before it becomes a loss! "
+    #                 f"(vel={_vel:.3f}, peak=${guard.peak_profit:.2f})"
+    #             )
 
         # === CHECK 1: SMART TAKE PROFIT ===
         if current_profit >= tp_min:  # Profit >= scaled threshold
@@ -2007,7 +2007,7 @@ class SmartRiskManager:
                 return True, ExitReason.TREND_REVERSAL, f"[REVERSAL] {ml_signal} ({ml_confidence:.0%}) - Loss: ${current_profit:.2f}"
 
         # 3x reversal warnings + loss > 0.3 ATR -> cut
-        if guard.reversal_warnings >= 3 and current_profit < warn_loss:
+        if guard.reversal_warnings >= 6 and current_profit < warn_loss:
             if trade_age_minutes < grace_minutes:
                 logger.info(f"[GRACE] {guard.reversal_warnings}x reversal warnings, loss ${current_profit:.2f} — holding {trade_age_minutes:.1f}m/{grace_minutes}m grace")
             else:
@@ -2034,12 +2034,12 @@ class SmartRiskManager:
 
         # === CHECK 5b: STALL DETECTION (ATR-scaled) ===
         # v4: more patient stall detection — 10 samples, 8 count threshold
-        stall_range_threshold = 0.10 * atr_unit  # 10% of ATR unit
+        stall_range_threshold = 0.05 * atr_unit  # 10% of ATR unit
         if len(guard.profit_history) >= 10 and trade_age_minutes >= 8:
             recent_range = max(guard.profit_history[-10:]) - min(guard.profit_history[-10:])
             if recent_range < stall_range_threshold and current_profit < stall_loss:
                 guard.stall_count += 1
-                if guard.stall_count >= 8:  # v4: from 4 to 8
+                if guard.stall_count >= 15:  # v4: from 4 to 8
                     return True, ExitReason.TREND_REVERSAL, f"[STALL] Loss ${current_profit:.2f} stalled (range ${recent_range:.1f} < ${stall_range_threshold:.1f}) — cutting"
 
         # === CHECK 6: DAILY LOSS LIMIT ===
@@ -2223,11 +2223,11 @@ def create_smart_risk_manager(capital: float = 5000.0) -> SmartRiskManager:
         capital=capital,
         max_daily_loss_percent=10000,       # Changed from 100.0
         max_total_loss_percent=10000,      # Changed from 100.0
-        max_loss_per_trade_percent=1.0,   # Changed from 30.0% (This caused the $39 loss!)
-        emergency_sl_percent=2.0,   
-        max_lot_size=6.0,       # Changed from 40.0%
-        base_lot_size=1,                     
-        recovery_lot_size=1,               
+        max_loss_per_trade_percent=20.0,   # Changed from 30.0% (This caused the $39 loss!)
+        emergency_sl_percent=20.0,   
+        max_lot_size=5.0,       # Changed from 40.0%
+        base_lot_size=0.05,                     
+        recovery_lot_size=0.05,               
         trend_reversal_threshold=0.65,      
         max_concurrent_positions=20,         
     )

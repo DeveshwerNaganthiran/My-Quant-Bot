@@ -158,7 +158,7 @@ class TradingBot:
         self._execution_times: list = []
         self._current_date = date.today()
         self._models_loaded = False
-        self._trade_cooldown_seconds = 0
+        self._trade_cooldown_seconds = 70
         self._start_time = datetime.now()
         self._daily_start_balance: float = 0
         self._total_session_profit: float = 0
@@ -1998,12 +1998,13 @@ class TradingBot:
 
             prob = ml_prediction.probability
             
-            ml_is_strongly_bullish = prob >= 0.60
-            ml_is_strongly_bearish = prob <= 0.48
-            ml_is_neutral = 0.48 <= prob < 0.60
+            # Widen the neutral band so AI doesn't block trades unless it is highly confident
+            ml_is_strongly_bullish = prob >= 0.65
+            ml_is_strongly_bearish = prob <= 0.35
+            ml_is_neutral = 0.35 <= prob < 0.65
 
             if ml_is_neutral:
-                if smc_conf >= 0.70:
+                if smc_conf >= 0.60:
                     combined_confidence = smc_conf * 0.90 
                     reason_suffix = f" | AI NEUTRAL ({prob:.1%}) -> Trusting SMC"
                     logger.info(f"⚖️ AI Neutral ({prob:.1%}). Trusting SMC {smc_signal.signal_type} ({smc_conf:.0%}).")
@@ -2021,8 +2022,14 @@ class TradingBot:
                     reason_suffix = f" | AI STRONG AGREE ({prob:.1%})"
                     logger.info(f"✅ CONFLUENCE: SMC {smc_signal.signal_type} + AI Strongly Agrees ({prob:.1%})")
                 else:
-                    logger.warning(f"🚫 BLOCKED: SMC says {smc_signal.signal_type} but AI strongly disagrees ({prob:.1%}).")
-                    return None
+                    # THE TIE-BREAKER: If AI disagrees, but SMC is extremely confident (>= 80%)
+                    if smc_conf >= 0.80:
+                        combined_confidence = smc_conf * 0.80 # Penalize confidence by 20% to reduce lot size
+                        reason_suffix = f" | SMC OVERRIDE (AI Disagreed at {prob:.1%})"
+                        logger.warning(f"⚠️ TIE-BREAKER: AI disagrees ({prob:.1%}) but SMC is VERY STRONG ({smc_conf:.0%}). Trusting SMC!")
+                    else:
+                        logger.warning(f"🚫 BLOCKED: SMC says {smc_signal.signal_type} and AI disagrees ({prob:.1%}).")
+                        return None
 
             combined_confidence *= london_penalty
             if regime_state and regime_state.regime == MarketRegime.HIGH_VOLATILITY:
@@ -2246,13 +2253,20 @@ class TradingBot:
         tick = self.mt5.get_tick(self.config.symbol)
         current_price = tick.bid if signal.signal_type == "SELL" else tick.ask
 
-        min_sl_distance = 1.0  
+        # The minimum distance in points the SL must be from the current price
+        min_sl_distance = 2.0  
+
+        # --- BULLETPROOF STOP LOSS FIX ---
         if signal.signal_type == "BUY":
-            if current_price - broker_sl < min_sl_distance:
-                broker_sl = current_price - (min_sl_distance * 2)  
-        else:  
-            if broker_sl - current_price < min_sl_distance:
-                broker_sl = current_price + (min_sl_distance * 2)  
+            # For a BUY, SL must ALWAYS be LOWER than the current price
+            if broker_sl >= current_price - min_sl_distance:
+                broker_sl = current_price - min_sl_distance
+                
+        else:  # SELL
+            # For a SELL, SL must ALWAYS be HIGHER than the current price
+            if broker_sl <= current_price + min_sl_distance:
+                broker_sl = current_price + min_sl_distance
+        # ---------------------------------  
 
         logger.info(f"  Broker SL: {broker_sl:.2f} (ATR-based protection)")
 

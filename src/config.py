@@ -85,7 +85,7 @@ class ThresholdsConfig:
 
     # Trade Timing
     trade_cooldown_seconds: int = 300        # Minimum seconds between trades
-    loop_interval_seconds: float = 30.0      # Main loop interval
+    loop_interval_seconds: float = 60.0      # Main loop interval
 
     # Session Multipliers
     sydney_lot_multiplier: float = 0.5       # Sydney session lot reduction
