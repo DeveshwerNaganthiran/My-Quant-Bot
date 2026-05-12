@@ -1494,7 +1494,7 @@ class SmartRiskManager:
                     if exit_confidence > 0.75:
                         # v0.2.5f: Only suppress tiny losses (<$2) during grace
                         # BUG FIX: was 200 (=$200, never triggers) → 2.0 (=$2)
-                        if in_grace_period and abs(current_profit) < 2.0:
+                        if in_grace_period and abs(current_profit) < 5.0:
                             logger.info(
                                 f"[GRACE PERIOD] Loss fuzzy={exit_confidence:.2%} suppressed "
                                 f"(t={trade_age_seconds:.0f}s < {grace_period_sec:.0f}s, loss=${current_profit:.2f})"
@@ -1513,7 +1513,7 @@ class SmartRiskManager:
                         )
                         if should_exit and close_fraction > 0.3:
                             # v0.2.5f: Only suppress tiny losses (<$2) during grace
-                            if in_grace_period and abs(current_profit) < 2.0:
+                            if in_grace_period and abs(current_profit) < 5.0:
                                 logger.info(
                                     f"[GRACE PERIOD] Kelly loss exit suppressed "
                                     f"(t={trade_age_seconds:.0f}s < {grace_period_sec:.0f}s)"
@@ -2223,8 +2223,8 @@ def create_smart_risk_manager(capital: float = 5000.0) -> SmartRiskManager:
         capital=capital,
         max_daily_loss_percent=10000,       # Changed from 100.0
         max_total_loss_percent=10000,      # Changed from 100.0
-        max_loss_per_trade_percent=20.0,   # Changed from 30.0% (This caused the $39 loss!)
-        emergency_sl_percent=20.0,   
+        max_loss_per_trade_percent=80.0,   # Changed from 30.0% (This caused the $39 loss!)
+        emergency_sl_percent=80.0,   
         max_lot_size=0.25,       # Changed from 40.0%
         base_lot_size=0.05,#0.1                     
         recovery_lot_size=0.05,               
