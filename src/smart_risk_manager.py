@@ -1012,16 +1012,17 @@ class SmartRiskManager:
 
     def _calculate_fuzzy_exit_threshold(self, current_profit: float) -> float:
         """
-        Tiered fuzzy exit thresholds based on profit magnitude.
+        FIXED: Inverted thresholds to enforce Positive R:R.
+        Hold small profits tightly, exit large profits easily if momentum dies.
         """
-        if current_profit < 2.0:
-            return 0.95  # FORCE HOLD: Ignore noise on micro profits
-        elif current_profit < 5.0:
-            return 0.90  # Medium protection
+        if current_profit < 3.0:
+            return 0.95  # MICRO PROFIT: Very strict. Do not cut early! Let it breathe.
         elif current_profit < 8.0:
-            return 0.85  # Normal holding
+            return 0.85  # SMALL PROFIT: Hold until strong reversal signal.
+        elif current_profit < 15.0:
+            return 0.75  # MEDIUM PROFIT: Normal fuzzy exit.
         else:
-            return 0.90  # Maximize
+            return 0.65  # LARGE PROFIT: Secure it easily if momentum starts to drop.
         
     def _predict_trajectory_calibrated(
         self,
@@ -1525,9 +1526,8 @@ class SmartRiskManager:
 
         # === PRIORITY 0: EMERGENCY SAFETY CHECKS ===
 
-        # 1. THE "NEVER GO RED" SHIELD (Upgraded to allow breathing room)
-        # Gold needs room. Only shield if it reached a real peak ($4.00+).
-        if guard.peak_profit >= 4.00 and current_profit <= 1.00:
+        # 1. THE "NEVER GO RED" SHIELD (Upgraded to $1.50 Rule)
+        if guard.peak_profit >= 1.50 and current_profit <= 0.20:
             return True, ExitReason.TAKE_PROFIT, f"[NEVER-GO-RED] Secured Breakeven (+${current_profit:.2f}). Peak was ${guard.peak_profit:.2f}"
         # 2. RELAXED PROFIT SHIELDS (Let the trades breathe!)
         # Lock in profit only on substantial peaks, not normal market noise
@@ -1852,7 +1852,8 @@ class SmartRiskManager:
      
     #    # === NEW FIX: EARLY MOMENTUM FADE (Relaxed) ===
     #     # Only panic if we have a decent profit ($3.00+), ignore noise under $3
-    #     if 3.00 <= current_profit < tp_min:
+        if 0.50 <= current_profit < tp_min:
+            pass # We removed the panic exit here so trades can reach tp_min
     #         # If velocity drops hard (candle is reversing rapidly)
     #         if _vel < -0.25 or (guard.velocity_was_positive and _vel < -0.15 and guard.decel_at_profit_count >= 2):
     #             return True, ExitReason.TAKE_PROFIT, (
@@ -2225,9 +2226,9 @@ def create_smart_risk_manager(capital: float = 5000.0) -> SmartRiskManager:
         max_total_loss_percent=100000,      # Changed from 100.0
         max_loss_per_trade_percent=80.0,   # Changed from 30.0% (This caused the $39 loss!)
         emergency_sl_percent=80.0,   
-        max_lot_size=7,       # Changed from 40.0%
-        base_lot_size=0.7,#0.1                     
-        recovery_lot_size=0.7,               
+        max_lot_size=3,       # Changed from 40.0%
+        base_lot_size=0.05,#0.1                     
+        recovery_lot_size=0.05,               
         trend_reversal_threshold=0.65,      
         max_concurrent_positions=20,         
     )

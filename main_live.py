@@ -158,7 +158,7 @@ class TradingBot:
         self._execution_times: list = []
         self._current_date = date.today()
         self._models_loaded = False
-        self._trade_cooldown_seconds = 45
+        self._trade_cooldown_seconds = 20
         self._start_time = datetime.now()
         self._daily_start_balance: float = 0
         self._total_session_profit: float = 0
@@ -1758,18 +1758,31 @@ class TradingBot:
             logger.info(f"Trade cooldown: {cooldown_remaining:.1f}s remaining before next trade allowed.")
             return
 
-        # --- 1. ACTIVATE PULLBACK FILTER ---
         can_trade_pullback, pb_reason = self._check_pullback_filter(df, final_signal.signal_type, current_price)
+        
+        # --- NEW: PEAK / BOTTOM PREVENTION (RSI & STOCH) ---
+        rsi_val = df["rsi"].drop_nulls().tail(1).item() if "rsi" in df.columns else 50
+        stoch_k = df["stoch_k"].drop_nulls().tail(1).item() if "stoch_k" in df.columns else 50
+        
+        if final_signal.signal_type == "BUY" and (rsi_val > 70 or stoch_k > 80):
+            can_trade_pullback = False
+            pb_reason = f"BUY blocked: Market is OVERBOUGHT at peak (RSI: {rsi_val:.1f})"
+        elif final_signal.signal_type == "SELL" and (rsi_val < 30 or stoch_k < 20):
+            can_trade_pullback = False
+            pb_reason = f"SELL blocked: Market is OVERSOLD at bottom (RSI: {rsi_val:.1f})"
+        # --------------------------------------------------
+
         self._last_filter_results.append({
-            "name": "Pullback Filter", 
+            "name": "Pullback & Extreme Filter", 
             "passed": can_trade_pullback,  
             "detail": pb_reason
         })
-        if not can_trade_pullback:
-            logger.warning(f"🚫 Trade blocked by Pullback Filter: {pb_reason}")
-            return  # Stops execution
         
-        # --- 2. ACTIVATE MTF CONFLUENCE FILTER ---
+        # ACTUALLY BLOCK THE TRADE IF OVEREXTENDED
+        if not can_trade_pullback:
+            logger.info(f"🚫 Entry Filter Blocked: {pb_reason}")
+            return
+        
         mtf_passed, mtf_detail = await self._check_mtf_confluence(final_signal.signal_type)
         
         if "AI OVERRIDE" in final_signal.reason:
@@ -1778,13 +1791,14 @@ class TradingBot:
 
         self._last_filter_results.append({
             "name": "MTF Confluence (M5/15/30)", 
-            "passed": mtf_passed,  
-            "detail": mtf_detail
+            "passed": True,  
+            "detail": mtf_detail + " [IGNORED]"
         })
         
         if not mtf_passed:
-            logger.warning(f"🚫 Trade blocked by MTF Filter: {mtf_detail}")
-            return  # Stops execution
+            # Changed from WARNING to INFO, and removed the 'return'
+            # Now the bot will take the trade even if the higher timeframes lag!
+            logger.info(f"MTF warning ignored: {mtf_detail}")
 
         # --- 3. EXHAUSTION / BORDER FILTER (RSI) ---
         if df is not None and "rsi" in df.columns:
@@ -1822,27 +1836,22 @@ class TradingBot:
             logger.debug("Smart Risk: Lot size is 0 (Trade Rejected) - skipping trade")
             return
 
-        # # === ADAPTIVE CANDLE BEHAVIOR FILTER ===
+        # === ADAPTIVE CANDLE BEHAVIOR FILTER (FIXED) ===
+        # Removed the FOMO logic. We WANT to buy on dips (red candles) 
+        # and sell on rallies (green candles) when in a trend!
         current_open = df["open"].tail(1).item()
         
-        # if self._forced_next_direction == "BUY" and current_price > current_open:
-        #     logger.info(f"Candle Behavior: BUY blocked - Candle is currently GREEN (Forced BUY expects RED). Open: {current_open:.2f}, Price: {current_price:.2f}")
-        #     return
-        # elif self._forced_next_direction == "SELL" and current_price < current_open:
-        #     logger.info(f"Candle Behavior: SELL blocked - Candle is currently RED (Forced SELL expects GREEN). Open: {current_open:.2f}, Price: {current_price:.2f}")
-        #     return
-        # elif not self._forced_next_direction:
-        #     if final_signal.signal_type == "BUY" and current_price < current_open:
-        #         logger.info(f"Candle Behavior: BUY blocked - Candle is currently RED. Open: {current_open:.2f}, Price: {current_price:.2f}")
-        #         return
-        #     elif final_signal.signal_type == "SELL" and current_price > current_open:
-        #         logger.info(f"Candle Behavior: SELL blocked - Candle is currently GREEN. Open: {current_open:.2f}, Price: {current_price:.2f}")
-        #         return
+        if self._forced_next_direction == "BUY" and current_price > current_open:
+            logger.info(f"Candle Behavior: BUY blocked - Candle is currently GREEN (Wait for a dip/red candle).")
+            return
+        elif self._forced_next_direction == "SELL" and current_price < current_open:
+            logger.info(f"Candle Behavior: SELL blocked - Candle is currently RED (Wait for a rally/green candle).")
+            return
 
         session_mult = getattr(self, '_current_session_multiplier', 1.0)
         if session_mult < 1.0:
             original_lot = safe_lot
-            safe_lot = max(0.7, round(safe_lot * session_mult, 2))  
+            safe_lot = max(0.05, round(safe_lot * session_mult, 2))  
             sydney_mode = getattr(self, '_is_sydney_session', False)
             if sydney_mode:
                 logger.info(f"Sydney SAFE MODE: Lot {original_lot:.2f} -> {safe_lot:.2f} (0.5x)")
@@ -1851,7 +1860,7 @@ class TradingBot:
         is_night_hours = wib_hour >= 22 or wib_hour <= 5
         if is_night_hours:
             original_lot = safe_lot
-            safe_lot = max(0.7, round(safe_lot * 0.5, 2))  
+            safe_lot = max(0.05, round(safe_lot * 0.5, 2))  
             logger.warning(f"NIGHT SAFETY MODE: Lot {original_lot:.2f} -> {safe_lot:.2f} (0.5x) - WIB {wib_hour}:xx")
             
         # safe_lot = 0.01
@@ -2040,7 +2049,7 @@ class TradingBot:
             ml_is_neutral = 0.35 <= prob < 0.65
 
             if ml_is_neutral:
-                if smc_conf >= 0.70:
+                if smc_conf >= 0.60:
                     combined_confidence = smc_conf * 0.90 
                     reason_suffix = f" | AI NEUTRAL ({prob:.1%}) -> Trusting SMC"
                     logger.info(f"⚖️ AI Neutral ({prob:.1%}). Trusting SMC {smc_signal.signal_type} ({smc_conf:.0%}).")
@@ -2107,10 +2116,13 @@ class TradingBot:
             if "atr" in df.columns:
                 atr_val = recent["atr"].to_list()[-1]
                 if atr_val is not None and atr_val > 0:
-                    atr = atr_val
+                    # Force a minimum ATR of $3.00 so the bot doesn't scalp pennies
+                    atr = max(atr_val, 3.0)
 
-            bounce_threshold = atr * 0.15      
-            consolidation_threshold = atr * 0.10  
+            # FIXED: Allow deep pullbacks! 
+            # Only block if the bounce is extremely violent (e.g., > 80% of ATR or at least $2.50)
+            bounce_threshold = max(atr * 0.80, 2.50)      
+            consolidation_threshold = max(atr * 0.20, 0.50)  
 
             closes = recent["close"].to_list()
             last_3_closes = closes[-3:]
@@ -2340,12 +2352,12 @@ class TradingBot:
             logger.error(f"Order failed: {result.comment} (code: {result.retcode})")
 
     async def _verify_and_execute_delayed(self, original_signal, position_result, original_regime_state):
-        """Waits 30 seconds and re-evaluates the trend before executing."""
+        """Waits 10 seconds and re-evaluates the trend before executing."""
         self._is_verifying_trade = True
-        logger.info(f"⏳ Trade signal found ({original_signal.signal_type}). Waiting 45 seconds to confirm trend...")
+        logger.info(f"⏳ Trade signal found ({original_signal.signal_type}). Waiting 10 seconds to confirm trend...")
         
         try:
-            await asyncio.sleep(45)
+            await asyncio.sleep(10)
             
             # Fetch latest data to confirm trend
             df_check = self.mt5.get_market_data(
@@ -2355,7 +2367,7 @@ class TradingBot:
             )
             
             if len(df_check) == 0:
-                logger.warning("Failed to fetch data for 45s verification. Cancelling trade.")
+                logger.warning("Failed to fetch data for 10s verification. Cancelling  trade.")
                 return
                 
             df_check = self.features.calculate_all(df_check, include_ml_features=True)
@@ -2404,11 +2416,11 @@ class TradingBot:
             new_final_signal = self._combine_signals(smc_sig, ml_pred, original_regime_state)
 
             if new_final_signal is None or new_final_signal.signal_type != original_signal.signal_type:
-                logger.warning(f"❌ 20s Verification Failed! Trend weakened or reversed. Trade cancelled.")
+                logger.warning(f"❌ 10s Verification Failed! Trend weakened or reversed. Trade cancelled.")
                 return
                 
             # If everything is still aligned, execute!
-            logger.info(f"✅ 20s Verification Passed! Trend is still {original_signal.signal_type}. Executing trade...")
+            logger.info(f"✅ 10s Verification Passed! Trend is still {original_signal.signal_type}. Executing trade...")
             
             # Update entry price to the exact newest tick
             tick = self.mt5.get_tick(self.config.symbol)
@@ -2418,7 +2430,7 @@ class TradingBot:
             await self._execute_trade_safe(original_signal, position_result, original_regime_state)
             
         except Exception as e:
-            logger.error(f"Error during 20s verification: {e}")
+            logger.error(f"Error during 10s verification: {e}")
         finally:
             self._is_verifying_trade = False
 

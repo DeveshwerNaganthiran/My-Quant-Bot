@@ -721,7 +721,7 @@ class SMCAnalyzer:
         market_structure = latest["market_structure"].item() if "market_structure" in df.columns else 0
 
         # Check for recent BOS/CHoCH (extended to 10 candles)
-        recent_df = df.tail(10)
+        recent_df = df.tail(40)
         recent_bos = recent_df["bos"].to_list() if "bos" in df.columns else []
         recent_choch = recent_df["choch"].to_list() if "choch" in df.columns else []
 
@@ -825,12 +825,15 @@ class SMCAnalyzer:
             entry_zone, zone_type = get_valid_bullish_zone()
             entry = current_close
 
-            # ADD THIS FIX: Only allow entry if price has pulled back into/near the zone
+            # STRICT PULLBACK FIX: Force price to retrace to the zone
             if entry_zone is not None:
-                distance_to_zone = (entry - entry_zone) / entry
-                # If price is more than 0.15% away from the OrderBlock/FVG, block the trade (wait for pullback)
-                if distance_to_zone > 0.0015: 
-                    logger.debug("BUY Signal skipped: Price hasn't pulled back to FVG/OB yet.")
+                # Calculate literal distance in dollars (for Gold)
+                distance_to_zone = entry - entry_zone 
+                
+                # If price is more than $0.50 above the Order Block/FVG, WAIT.
+                # Do not FOMO buy the peak! Let it drop back into the zone.
+                if distance_to_zone > 0.50: 
+                    logger.debug(f"BUY Signal skipped: Price (${entry:.2f}) hasn't pulled back to {zone_type} (${entry_zone:.2f}) yet.")
                     return None
 
             # SL below swing low or ATR-based (use the FURTHER one to prevent whipsaw)
@@ -889,8 +892,19 @@ class SMCAnalyzer:
               (has_bearish_fvg or has_bearish_ob)):
 
             entry_zone, zone_type = get_valid_bearish_zone()
-            # FIX: ALWAYS use current_close as entry (no stale prices)
             entry = current_close
+
+            # STRICT PULLBACK FIX: Force price to bounce back up to the zone
+            if entry_zone is not None:
+                distance_to_zone = entry_zone - entry 
+                
+                # If price is more than $0.50 below the Order Block/FVG, WAIT.
+                # Do not FOMO sell the bottom! Let it rally back into the zone.
+                if distance_to_zone > 0.50: 
+                    logger.debug(f"SELL Signal skipped: Price (${entry:.2f}) hasn't pulled back up to {zone_type} (${entry_zone:.2f}) yet.")
+                    return None
+
+            # SL above swing high or ATR-based (use the FURTHER one to prevent whipsaw)
 
             # SL above swing high or ATR-based (use the FURTHER one to prevent whipsaw)
             swing_sl = last_swing_high if last_swing_high and last_swing_high > entry else None
