@@ -2221,13 +2221,13 @@ class SmartRiskManager:
 def create_smart_risk_manager(capital: float = 5000.0) -> SmartRiskManager:
     return SmartRiskManager(
         capital=capital,
-        max_daily_loss_percent=10000,       # Changed from 100.0
-        max_total_loss_percent=10000,      # Changed from 100.0
+        max_daily_loss_percent=100000,       # Changed from 100.0
+        max_total_loss_percent=100000,      # Changed from 100.0
         max_loss_per_trade_percent=80.0,   # Changed from 30.0% (This caused the $39 loss!)
         emergency_sl_percent=80.0,   
-        max_lot_size=0.25,       # Changed from 40.0%
-        base_lot_size=0.05,#0.1                     
-        recovery_lot_size=0.05,               
+        max_lot_size=7,       # Changed from 40.0%
+        base_lot_size=0.7,#0.1                     
+        recovery_lot_size=0.7,               
         trend_reversal_threshold=0.65,      
         max_concurrent_positions=20,         
     )

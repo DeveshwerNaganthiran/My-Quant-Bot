@@ -128,7 +128,7 @@ class TradingBot:
             atr_be_mult=2.0,           
             atr_trail_start_mult=2.5,  
             atr_trail_step_mult=1.5,   
-            min_profit_to_protect=10.0,
+            min_profit_to_protect=25.0,
             max_drawdown_from_peak=50.0,  
             enable_market_close_handler=False,
             min_profit_before_close=3.0,
@@ -158,7 +158,7 @@ class TradingBot:
         self._execution_times: list = []
         self._current_date = date.today()
         self._models_loaded = False
-        self._trade_cooldown_seconds = 70
+        self._trade_cooldown_seconds = 45
         self._start_time = datetime.now()
         self._daily_start_balance: float = 0
         self._total_session_profit: float = 0
@@ -175,6 +175,8 @@ class TradingBot:
         self._last_pyramid_time: Optional[datetime] = None
         self._position_check_interval: int = 5
 
+        # Around line 120 in main_live.py, add this line:
+        self._is_verifying_trade = False
         self._last_filter_results: list = []
         self._last_model_update_time: float = 0.0
         self._h1_ema20_value: float = 0.0
@@ -1413,6 +1415,10 @@ class TradingBot:
         return None
 
     async def _trading_iteration(self):
+        # Add this guard to prevent multiple verifications running at the same time
+        if getattr(self, '_is_verifying_trade', False):
+            return
+
         self._last_filter_results = []
         self.filter_config.load()
 
@@ -1752,15 +1758,18 @@ class TradingBot:
             logger.info(f"Trade cooldown: {cooldown_remaining:.1f}s remaining before next trade allowed.")
             return
 
+        # --- 1. ACTIVATE PULLBACK FILTER ---
         can_trade_pullback, pb_reason = self._check_pullback_filter(df, final_signal.signal_type, current_price)
         self._last_filter_results.append({
             "name": "Pullback Filter", 
-            "passed": True,  
-            "detail": pb_reason + " [IGNORED]"
+            "passed": can_trade_pullback,  
+            "detail": pb_reason
         })
         if not can_trade_pullback:
-            logger.info(f"Pullback warning ignored: {pb_reason}")
+            logger.warning(f"🚫 Trade blocked by Pullback Filter: {pb_reason}")
+            return  # Stops execution
         
+        # --- 2. ACTIVATE MTF CONFLUENCE FILTER ---
         mtf_passed, mtf_detail = await self._check_mtf_confluence(final_signal.signal_type)
         
         if "AI OVERRIDE" in final_signal.reason:
@@ -1769,12 +1778,29 @@ class TradingBot:
 
         self._last_filter_results.append({
             "name": "MTF Confluence (M5/15/30)", 
-            "passed": True,  
-            "detail": mtf_detail + " [IGNORED]"
+            "passed": mtf_passed,  
+            "detail": mtf_detail
         })
         
         if not mtf_passed:
-            logger.info(f"MTF warning ignored: {mtf_detail}")
+            logger.warning(f"🚫 Trade blocked by MTF Filter: {mtf_detail}")
+            return  # Stops execution
+
+        # --- 3. EXHAUSTION / BORDER FILTER (RSI) ---
+        if df is not None and "rsi" in df.columns:
+            current_rsi = df["rsi"].tail(1).item()
+            if current_rsi is not None:
+                # Do not BUY if the market is already at the ceiling (>70 RSI)
+                if final_signal.signal_type == "BUY" and current_rsi > 70:
+                    logger.warning(f"🚫 BUY blocked: RSI is {current_rsi:.1f} (Overbought). Market is at the ceiling!")
+                    self._last_filter_results.append({"name": "Border Filter", "passed": False, "detail": f"RSI {current_rsi:.1f} > 70"})
+                    return  # Stops execution
+                
+                # Do not SELL if the market is already at the floor (<30 RSI)
+                elif final_signal.signal_type == "SELL" and current_rsi < 30:
+                    logger.warning(f"🚫 SELL blocked: RSI is {current_rsi:.1f} (Oversold). Market is at the floor!")
+                    self._last_filter_results.append({"name": "Border Filter", "passed": False, "detail": f"RSI {current_rsi:.1f} < 30"})
+                    return  # Stops execution
 
         self.smart_risk.check_new_day()
         risk_rec = self.smart_risk.get_trading_recommendation()
@@ -1816,7 +1842,7 @@ class TradingBot:
         session_mult = getattr(self, '_current_session_multiplier', 1.0)
         if session_mult < 1.0:
             original_lot = safe_lot
-            safe_lot = max(0.05, round(safe_lot * session_mult, 2))  
+            safe_lot = max(0.7, round(safe_lot * session_mult, 2))  
             sydney_mode = getattr(self, '_is_sydney_session', False)
             if sydney_mode:
                 logger.info(f"Sydney SAFE MODE: Lot {original_lot:.2f} -> {safe_lot:.2f} (0.5x)")
@@ -1825,7 +1851,7 @@ class TradingBot:
         is_night_hours = wib_hour >= 22 or wib_hour <= 5
         if is_night_hours:
             original_lot = safe_lot
-            safe_lot = max(0.05, round(safe_lot * 0.5, 2))  
+            safe_lot = max(0.7, round(safe_lot * 0.5, 2))  
             logger.warning(f"NIGHT SAFETY MODE: Lot {original_lot:.2f} -> {safe_lot:.2f} (0.5x) - WIB {wib_hour}:xx")
             
         # safe_lot = 0.01
@@ -1886,7 +1912,11 @@ class TradingBot:
             logger.warning(f"Stacking Prevention: Max positions ({self.smart_risk.max_concurrent_positions}) reached for {final_signal.signal_type}. Skipping new entry.")
             return  
 
-        await self._execute_trade_safe(final_signal, position_result, regime_state)
+        # REMOVE OR COMMENT OUT THIS LINE:
+        # await self._execute_trade_safe(final_signal, position_result, regime_state)
+        
+        # REPLACE IT WITH THIS:
+        asyncio.create_task(self._verify_and_execute_delayed(final_signal, position_result, regime_state))
     
     def _combine_signals(
         self,
@@ -2208,24 +2238,189 @@ class TradingBot:
         )
         
         if result.success:
-            logger.info(f"ORDER EXECUTED! ID: {result.order_id}")
+            logger.info(f"SAFE ORDER EXECUTED! ID: {result.order_id}")
             self._last_signal = signal
             self._last_trade_time = datetime.now()
+
+            expected_price = signal.entry_price
+            actual_price = result.price if result.price > 0 else expected_price
+            slippage = abs(actual_price - expected_price)
+            slippage_pips = slippage * 10  
+
+            requested_volume = position.lot_size
+            filled_volume = result.volume if result.volume > 0 else requested_volume
+
+            entry_price_actual = actual_price if actual_price > 0 else signal.entry_price
+            lot_size_actual = filled_volume
+
+            self.smart_risk.register_position(
+                ticket=result.order_id,
+                entry_price=entry_price_actual,  
+                lot_size=lot_size_actual,        
+                direction=signal.signal_type,
+            )
 
             regime = self._last_regime.value if hasattr(self, '_last_regime') else "unknown"
             session_status = self.session_filter.get_status_report()
             volatility = session_status.get("volatility", "unknown")
 
-            await self.notifications.notify_trade_open(
-                result=result,
-                signal=signal,
-                position=position,
-                regime=regime,
-                volatility=volatility,
-                session_status=session_status,
-            )
+            self._open_trade_info[result.order_id] = {
+                "entry_price": entry_price_actual,  
+                "lot_size": lot_size_actual,        
+                "direction": signal.signal_type,
+                "open_time": datetime.now(),
+            }
+
+            # --- THE FIX: Define Telegram variables FIRST so they never throw UnboundLocalError ---
+            smc_fvg, smc_ob, smc_bos, smc_choch = False, False, False, False
+            market_quality, market_score, dynamic_threshold = "moderate", 50, 0.7
+
+            try:
+                smc_fvg = "FVG" in signal.reason.upper()
+                smc_ob = "OB" in signal.reason.upper() or "ORDER BLOCK" in signal.reason.upper()
+                smc_bos = "BOS" in signal.reason.upper()
+                smc_choch = "CHOCH" in signal.reason.upper()
+
+                market_quality = self.dynamic_confidence._last_quality if hasattr(self.dynamic_confidence, '_last_quality') else "moderate"
+                market_score = self.dynamic_confidence._last_score if hasattr(self.dynamic_confidence, '_last_score') else 50
+                dynamic_threshold = self.dynamic_confidence._last_threshold if hasattr(self.dynamic_confidence, '_last_threshold') else 0.7
+
+                self.trade_logger.log_trade_open(
+                    ticket=result.order_id,
+                    symbol=self.config.symbol,
+                    direction=signal.signal_type,
+                    lot_size=position.lot_size,
+                    entry_price=signal.entry_price,
+                    stop_loss=0,
+                    take_profit=signal.take_profit,
+                    regime=regime,
+                    volatility=volatility,
+                    session=session_status.get("session", "unknown"),
+                    spread=self.mt5.get_symbol_info(self.config.symbol).get("spread", 0) if hasattr(self.mt5, 'get_symbol_info') else 0,
+                    atr=0,  
+                    smc_signal=signal.signal_type,
+                    smc_confidence=signal.confidence,
+                    smc_reason=signal.reason,
+                    smc_fvg=smc_fvg,
+                    smc_ob=smc_ob,
+                    smc_bos=smc_bos,
+                    smc_choch=smc_choch,
+                    ml_signal=self._last_ml_signal if hasattr(self, '_last_ml_signal') else "HOLD",
+                    ml_confidence=self._last_ml_confidence if hasattr(self, '_last_ml_confidence') else 0.5,
+                    market_quality=str(market_quality),
+                    market_score=int(market_score) if market_score else 50,
+                    dynamic_threshold=float(dynamic_threshold) if dynamic_threshold else 0.7,
+                    balance=self.mt5.account_balance,
+                    equity=self.mt5.account_equity,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to log trade open locally: {e}")
+
+            # Send Telegram Notification Safely
+            try:
+                await self.notifications.notify_trade_open(
+                    result=result,
+                    signal=signal,
+                    position=position,
+                    regime=regime,
+                    volatility=volatility,
+                    session_status=session_status,
+                    safe_mode=True,
+                    smc_fvg=smc_fvg,
+                    smc_ob=smc_ob,
+                    smc_bos=smc_bos,
+                    smc_choch=smc_choch,
+                    dynamic_threshold=dynamic_threshold,
+                    market_quality=market_quality,
+                    market_score=market_score,
+                )
+            except Exception as e:
+                logger.error(f"TELEGRAM FAILED: {e}")
         else:
             logger.error(f"Order failed: {result.comment} (code: {result.retcode})")
+
+    async def _verify_and_execute_delayed(self, original_signal, position_result, original_regime_state):
+        """Waits 30 seconds and re-evaluates the trend before executing."""
+        self._is_verifying_trade = True
+        logger.info(f"⏳ Trade signal found ({original_signal.signal_type}). Waiting 45 seconds to confirm trend...")
+        
+        try:
+            await asyncio.sleep(45)
+            
+            # Fetch latest data to confirm trend
+            df_check = self.mt5.get_market_data(
+                symbol=self.config.symbol,
+                timeframe=self.config.execution_timeframe,
+                count=50,
+            )
+            
+            if len(df_check) == 0:
+                logger.warning("Failed to fetch data for 45s verification. Cancelling trade.")
+                return
+                
+            df_check = self.features.calculate_all(df_check, include_ml_features=True)
+            df_check = self.smc.calculate_all(df_check)
+            
+            # Re-run ML Prediction exactly as done in the main loop
+            mtf_df = self._build_wide_mtf_features()
+            is_mtf_model = False
+            if self.ml_model.feature_names:
+                is_mtf_model = any(f.startswith("M5_") or f.startswith("M1_") for f in self.ml_model.feature_names)
+                
+            if is_mtf_model and mtf_df is not None:
+                if "regime" not in mtf_df.columns:
+                    reg_map = {"low_volatility": 0, "medium_volatility": 1, "high_volatility": 2, "crisis": 3}
+                    reg_str = original_regime_state.regime.value if original_regime_state else "medium_volatility"
+                    mtf_df = mtf_df.with_columns(pl.lit(reg_map.get(reg_str, 1)).cast(pl.Int32).alias("regime"))
+                if "regime_confidence" not in mtf_df.columns:
+                    reg_conf = original_regime_state.confidence if original_regime_state else 1.0
+                    mtf_df = mtf_df.with_columns(pl.lit(reg_conf).cast(pl.Float64).alias("regime_confidence"))
+                    
+                feature_cols = self._get_available_features(mtf_df)
+                missing_cols = [c for c in feature_cols if c not in mtf_df.columns]
+                if missing_cols:
+                    mtf_df = mtf_df.with_columns([pl.lit(0.0).alias(c) for c in missing_cols])
+                    
+                raw_ml = self.ml_model.predict(mtf_df, feature_cols)
+            else:
+                feature_cols = self._get_available_features(df_check)
+                missing_cols = [c for c in feature_cols if c not in df_check.columns]
+                if missing_cols:
+                    df_check = df_check.with_columns([pl.lit(0.0).alias(c) for c in missing_cols])
+                raw_ml = self.ml_model.predict(df_check, feature_cols)
+                
+            raw_smc = self.smc.generate_signal(df_check)
+            
+            # Apply Alternator / Forced Direction Logic
+            if getattr(self, '_forced_next_direction', None):
+                ml_pred = self._invert_ml_prediction(raw_ml) if raw_ml.signal != self._forced_next_direction else raw_ml
+                smc_sig = self._invert_smc_signal(raw_smc) if raw_smc and raw_smc.signal_type != self._forced_next_direction else raw_smc
+            else:
+                ml_pred = raw_ml
+                smc_sig = raw_smc
+                
+            # --- UPDATED VERIFICATION STEP ---
+            # Pass the new signals back through your combination logic so it respects the "Neutral AI / Strong SMC" rules
+            new_final_signal = self._combine_signals(smc_sig, ml_pred, original_regime_state)
+
+            if new_final_signal is None or new_final_signal.signal_type != original_signal.signal_type:
+                logger.warning(f"❌ 20s Verification Failed! Trend weakened or reversed. Trade cancelled.")
+                return
+                
+            # If everything is still aligned, execute!
+            logger.info(f"✅ 20s Verification Passed! Trend is still {original_signal.signal_type}. Executing trade...")
+            
+            # Update entry price to the exact newest tick
+            tick = self.mt5.get_tick(self.config.symbol)
+            if tick:
+                original_signal.entry_price = tick.ask if original_signal.signal_type == "BUY" else tick.bid
+
+            await self._execute_trade_safe(original_signal, position_result, original_regime_state)
+            
+        except Exception as e:
+            logger.error(f"Error during 20s verification: {e}")
+        finally:
+            self._is_verifying_trade = False
 
     async def _execute_trade_safe(self, signal: SMCSignal, position, regime_state):
         emergency_sl = self.smart_risk.calculate_emergency_sl(
@@ -2254,25 +2449,42 @@ class TradingBot:
             self._last_trade_time = datetime.now()
             return
 
+        # --- FIX: ATR Volatility Buffer to survive Liquidity Sweeps ---
+        atr_buffer = 0.0
+        cached_df = getattr(self, '_cached_df', None)
+        if cached_df is not None and "atr" in cached_df.columns:
+            atr_series = cached_df["atr"].drop_nulls()
+            if len(atr_series) > 0:
+                # Add 1.5x ATR to the SMC Stop Loss to give the trade breathing room
+                atr_buffer = atr_series.tail(1).item() * 1.5  
+                
+        # --- LIQUIDITY SWEEP SURVIVAL FIX ---
         broker_sl = signal.stop_loss
-
         tick = self.mt5.get_tick(self.config.symbol)
         current_price = tick.bid if signal.signal_type == "SELL" else tick.ask
 
-        # The minimum distance in points the SL must be from the current price
-        min_sl_distance = 4.0  
-
-        # --- BULLETPROOF STOP LOSS FIX ---
+        # 1. Dynamic ATR Buffer (Give the trade room to breathe against wicks)
+        atr_buffer = 0.0
+        cached_df = getattr(self, '_cached_df', None)
+        if cached_df is not None and "atr" in cached_df.columns:
+            atr_series = cached_df["atr"].drop_nulls()
+            if len(atr_series) > 0:
+                atr_buffer = atr_series.tail(1).item() * 1.5  # Add 1.5x ATR padding
+        
+        # 2. Hard Minimum Distance (Gold fluctuates $1-$3 naturally. Force a minimum $4.00 SL)
+        min_safe_distance = 4.0 
+        
         if signal.signal_type == "BUY":
-            # For a BUY, SL must ALWAYS be LOWER than the current price
-            if broker_sl >= current_price - min_sl_distance:
-                broker_sl = current_price - min_sl_distance
+            broker_sl -= atr_buffer
+            if current_price - broker_sl < min_safe_distance:
+                broker_sl = current_price - min_safe_distance
+        else:  
+            broker_sl += atr_buffer
+            if broker_sl - current_price < min_safe_distance:
+                broker_sl = current_price + min_safe_distance
                 
-        else:  # SELL
-            # For a SELL, SL must ALWAYS be HIGHER than the current price
-            if broker_sl <= current_price + min_sl_distance:
-                broker_sl = current_price + min_sl_distance
-        # ---------------------------------  
+        logger.info(f"🛡️ Adjusted Broker SL to {broker_sl:.2f} to survive liquidity sweeps.")
+        # --------------------------------------------------
 
         logger.info(f"  Broker SL: {broker_sl:.2f} (ATR-based protection)")
 

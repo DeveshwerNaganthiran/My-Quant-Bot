@@ -269,10 +269,10 @@ class SmartPositionManager:
 
     def __init__(
         self,
-        breakeven_pips: float = 8.0,       # Changed from 10.0: Trigger BE after just 2 pips
-        trail_start_pips: float = 15.0,     # Changed from 15.0: Start trailing instantly
-        trail_step_pips: float = 3.0,      # Changed from 5.0: Trail very tightly
-        min_profit_to_protect: float = 2.0,# Changed from 30.0: Protect tiny profits
+        breakeven_pips=150.0,       
+        trail_start_pips=250.0,     
+        trail_step_pips=50.0,        # Changed from 5.0: Trail very tightly
+        min_profit_to_protect: float = 25.0,# Changed from 30.0: Protect tiny profits
         max_drawdown_from_peak: float = 15.0,  
         # ATR-adaptive exit multipliers
         atr_be_mult: float = 0.5,          # Changed from 1.0: Trigger BE at 0.2 ATR          # Was 2.0 (Breakeven triggers at 1.0 ATR)
@@ -593,9 +593,9 @@ class SmartPositionManager:
                 elif progress_pct >= 0.35:
                     lock_in_pct = 0.25  # Pure Breakeven + spread fees (2% of TP)
                     tier_name = "35%"
-                elif progress_pct >= 0.30:
-                    lock_in_pct = 0.20  # Pure Breakeven + spread fees (2% of TP)
-                    tier_name = "30%"
+                # elif progress_pct >= 0.30:
+                #     lock_in_pct = 0.20  # Pure Breakeven + spread fees (2% of TP)
+                #     tier_name = "30%"
                 # elif progress_pct >= 0.25:
                 #     lock_in_pct = 0.15  # Pure Breakeven + spread fees (2% of TP)
                 #     tier_name = "25%"
@@ -605,6 +605,15 @@ class SmartPositionManager:
                 # elif progress_pct >= 0.15:
                 #     lock_in_pct = 0.05  # Pure Breakeven + spread fees (2% of TP)
                 #     tier_name = "15%"
+                # elif progress_pct >= 0.10:
+                #     lock_in_pct = 0.04  # Pure Breakeven + spread fees (2% of TP)
+                #     tier_name = "10%"
+                # elif progress_pct >= 0.5:
+                #     lock_in_pct = 0.01  # Pure Breakeven + spread fees (2% of TP)
+                #     tier_name = "5%"
+                # elif progress_pct >= 0.1:
+                #     lock_in_pct = 0.005  # Pure Breakeven + spread fees (2% of TP)
+                #     tier_name = "1%"
 
                 if lock_in_pct > 0.0:
                     lock_distance = lock_in_pct * tp_distance_price
