@@ -158,7 +158,7 @@ class TradingBot:
         self._execution_times: list = []
         self._current_date = date.today()
         self._models_loaded = False
-        self._trade_cooldown_seconds = 20
+        self._trade_cooldown_seconds = 10
         self._start_time = datetime.now()
         self._daily_start_balance: float = 0
         self._total_session_profit: float = 0
@@ -1157,15 +1157,18 @@ class TradingBot:
                 logger.info(f"Position #{ticket} closed by Broker S/L or T/P. Profit: ${last_profit:.2f}")
                 self.smart_risk.record_trade_result(last_profit)
                 
-                # ---> WIN/LOSS ALTERNATOR LOGIC <---
-                if last_profit > 0: # <--- CHANGED to last_profit
-                    self._forced_next_direction = None 
-                    logger.warning(f"🟢 Trade WON (+${last_profit:.2f}). AI will decide next trade!")
+                # ---> WIN/LOSS ALTERNATOR LOGIC (Broker Close) <---
+                if last_profit > 1.00: 
+                    self._forced_next_direction = trade_dir 
+                    logger.warning(f"🟢 Trade WON (+${last_profit:.2f}). Next trade stays {self._forced_next_direction}!")
+                elif last_profit > -1.50:
+                    self._forced_next_direction = trade_dir
+                    logger.warning(f"🟡 Trade SCRATCHED/BREAKEVEN (${last_profit:.2f}). Ignoring noise, next trade stays {self._forced_next_direction}!")
                 else:
-                    self._forced_next_direction = None
-                    logger.warning(f"🔴 Trade LOST (${last_profit:.2f}). AI will decide next trade!")
+                    self._forced_next_direction = "BUY" if trade_dir == "SELL" else "SELL"
+                    logger.warning(f"🔴 Trade LOST (${last_profit:.2f}). Next trade FLIPS to {self._forced_next_direction}!")
                     
-                self._save_forced_direction("") 
+                self._save_forced_direction(self._forced_next_direction) 
                 # --------------------------------------------------
                 
                 self.smart_risk.unregister_position(ticket)
@@ -1495,6 +1498,7 @@ class TradingBot:
         if self.ml_model.feature_names:
             is_mtf_model = any(f.startswith("M5_") or f.startswith("M1_") for f in self.ml_model.feature_names)
             
+        # 1. GENERATE RAW SIGNALS (MTF vs Single TF)
         if is_mtf_model and mtf_df is not None:
             if "regime" not in mtf_df.columns:
                 reg_map = {"low_volatility": 0, "medium_volatility": 1, "high_volatility": 2, "crisis": 3}
@@ -1514,24 +1518,7 @@ class TradingBot:
             raw_ml_prediction = self.ml_model.predict(mtf_df, feature_cols)
             raw_smc_signal = self.smc.generate_signal(df)
             
-            if self._forced_next_direction:
-                if raw_ml_prediction.signal != self._forced_next_direction:
-                    ml_prediction = self._invert_ml_prediction(raw_ml_prediction)
-                else:
-                    ml_prediction = raw_ml_prediction
-                    
-                if raw_smc_signal and raw_smc_signal.signal_type != self._forced_next_direction:
-                    smc_signal = self._invert_smc_signal(raw_smc_signal)
-                else:
-                    smc_signal = raw_smc_signal
-                mode_tag = f"[FORCED {self._forced_next_direction}]"
-            else:
-                ml_prediction = raw_ml_prediction
-                smc_signal = raw_smc_signal
-                mode_tag = "[STANDARD]"
-                
-            self._cached_ml_prediction = ml_prediction
-            self._cached_df = df
+            
         else:
             feature_cols = self._get_available_features(df)
             missing_cols = [c for c in feature_cols if c not in df.columns]
@@ -1540,25 +1527,32 @@ class TradingBot:
                 
             raw_ml_prediction = self.ml_model.predict(df, feature_cols)
             raw_smc_signal = self.smc.generate_signal(df)
+
+        # 2. APPLY FORCED DIRECTION LOGIC (Alternator)
+        if self._forced_next_direction:
+            mode_tag = f"[FORCED {self._forced_next_direction}]"
             
-            if self._forced_next_direction:
-                if raw_ml_prediction.signal != self._forced_next_direction:
-                    ml_prediction = self._invert_ml_prediction(raw_ml_prediction)
-                else:
-                    ml_prediction = raw_ml_prediction
-                    
-                if raw_smc_signal and raw_smc_signal.signal_type != self._forced_next_direction:
-                    smc_signal = self._invert_smc_signal(raw_smc_signal)
-                else:
-                    smc_signal = raw_smc_signal
-                mode_tag = f"[FORCED {self._forced_next_direction}]"
+            # Invert ML Bias if it disagrees
+            if raw_ml_prediction.signal != self._forced_next_direction:
+                ml_prediction = self._invert_ml_prediction(raw_ml_prediction)
             else:
                 ml_prediction = raw_ml_prediction
-                smc_signal = raw_smc_signal
-                mode_tag = "[STANDARD]"
                 
-            self._cached_ml_prediction = ml_prediction
-            self._cached_df = df
+            # CRITICAL FIX: Discard SMC if it disagrees (Do not invert chart geometry!)
+            if raw_smc_signal and raw_smc_signal.signal_type != self._forced_next_direction:
+                logger.debug(f"Discarding SMC {raw_smc_signal.signal_type}. Waiting for a structural {self._forced_next_direction} pattern.")
+                smc_signal = None
+            else:
+                smc_signal = raw_smc_signal
+                
+        else:
+            mode_tag = "[STANDARD]"
+            ml_prediction = raw_ml_prediction
+            smc_signal = raw_smc_signal
+            
+        self._cached_ml_prediction = ml_prediction
+                
+        self._cached_df = df
 
         self._last_ml_signal = ml_prediction.signal
         self._last_ml_confidence = ml_prediction.confidence
@@ -1837,21 +1831,22 @@ class TradingBot:
             return
 
         # === ADAPTIVE CANDLE BEHAVIOR FILTER (FIXED) ===
-        # Removed the FOMO logic. We WANT to buy on dips (red candles) 
-        # and sell on rallies (green candles) when in a trend!
+        # We WANT to buy on dips (red candles) and sell on rallies (green candles)
         current_open = df["open"].tail(1).item()
         
-        if self._forced_next_direction == "BUY" and current_price > current_open:
-            logger.info(f"Candle Behavior: BUY blocked - Candle is currently GREEN (Wait for a dip/red candle).")
+        target_direction = self._forced_next_direction or final_signal.signal_type
+        
+        if target_direction == "BUY" and current_price > current_open:
+            logger.info(f"🚫 Candle Behavior: BUY blocked - Candle is currently GREEN (Wait for a dip/red candle). Open: {current_open:.2f}, Price: {current_price:.2f}")
             return
-        elif self._forced_next_direction == "SELL" and current_price < current_open:
-            logger.info(f"Candle Behavior: SELL blocked - Candle is currently RED (Wait for a rally/green candle).")
+        elif target_direction == "SELL" and current_price < current_open:
+            logger.info(f"🚫 Candle Behavior: SELL blocked - Candle is currently RED (Wait for a rally/green candle). Open: {current_open:.2f}, Price: {current_price:.2f}")
             return
 
         session_mult = getattr(self, '_current_session_multiplier', 1.0)
         if session_mult < 1.0:
             original_lot = safe_lot
-            safe_lot = max(0.05, round(safe_lot * session_mult, 2))  
+            safe_lot = max(0.01, round(safe_lot * session_mult, 2))  
             sydney_mode = getattr(self, '_is_sydney_session', False)
             if sydney_mode:
                 logger.info(f"Sydney SAFE MODE: Lot {original_lot:.2f} -> {safe_lot:.2f} (0.5x)")
@@ -1860,7 +1855,7 @@ class TradingBot:
         is_night_hours = wib_hour >= 22 or wib_hour <= 5
         if is_night_hours:
             original_lot = safe_lot
-            safe_lot = max(0.05, round(safe_lot * 0.5, 2))  
+            safe_lot = max(0.01, round(safe_lot * 0.5, 2))  
             logger.warning(f"NIGHT SAFETY MODE: Lot {original_lot:.2f} -> {safe_lot:.2f} (0.5x) - WIB {wib_hour}:xx")
             
         # safe_lot = 0.01
@@ -2104,118 +2099,102 @@ class TradingBot:
         current_price: float,
     ) -> Tuple[bool, str]:
         """
-        Check if price is in a pullback/retrace against signal direction.
+        Check if price is in a safe entry zone.
+        Forces the bot to buy red candles (dips) and sell green candles (rallies).
+        Prevents buying falling knives and parabolic overextensions (Rubber Band effect).
         """
         try:
-            recent = df.tail(10)
+            recent_5 = df.tail(5)
+            recent_20 = df.tail(20) # Look back 20 minutes for parabolic moves
 
-            if len(recent) < 5:
+            if len(recent_20) < 20:
                 return True, "Not enough data for pullback check"
 
             atr = 12.0  
             if "atr" in df.columns:
-                atr_val = recent["atr"].to_list()[-1]
+                atr_val = recent_5["atr"].to_list()[-1]
                 if atr_val is not None and atr_val > 0:
-                    # Force a minimum ATR of $3.00 so the bot doesn't scalp pennies
                     atr = max(atr_val, 3.0)
 
-            # FIXED: Allow deep pullbacks! 
-            # Only block if the bounce is extremely violent (e.g., > 80% of ATR or at least $2.50)
-            bounce_threshold = max(atr * 0.80, 2.50)      
-            consolidation_threshold = max(atr * 0.20, 0.50)  
-
-            closes = recent["close"].to_list()
-            last_3_closes = closes[-3:]
-
-            short_momentum = last_3_closes[-1] - last_3_closes[0]
-            momentum_direction = "UP" if short_momentum > 0 else "DOWN"
-
-            macd_hist_direction = "NEUTRAL"
-            if "macd_histogram" in df.columns:
-                macd_hist = recent["macd_histogram"].to_list()
-                last_hist = macd_hist[-1] if macd_hist[-1] is not None else 0
-                prev_hist = macd_hist[-2] if macd_hist[-2] is not None else 0
-
-                if last_hist > prev_hist:
-                    macd_hist_direction = "RISING"  
-                else:
-                    macd_hist_direction = "FALLING"  
-
-            price_vs_ema = "NEUTRAL"
-            if "ema_9" in df.columns:
-                ema_9 = recent["ema_9"].to_list()[-1]
-                if ema_9 is not None:
-                    if current_price > ema_9 * 1.001:  
-                        price_vs_ema = "ABOVE"
-                    elif current_price < ema_9 * 0.999:  
-                        price_vs_ema = "BELOW"
-
-            if self._forced_next_direction:
-                if signal_direction == "BUY":  
-                    if momentum_direction == "UP" and short_momentum > bounce_threshold:
-                        return False, f"BUY blocked: Price bouncing UP (+${short_momentum:.2f} > {bounce_threshold:.2f})"
-
-                    if macd_hist_direction == "RISING" and momentum_direction == "UP":
-                        return False, f"BUY blocked: MACD bullish + price rising"
-
-                    if price_vs_ema == "ABOVE" and momentum_direction == "UP":
-                        return False, f"BUY blocked: Price above EMA9 and rising"
-
-                    if momentum_direction == "DOWN":
-                        return True, f"BUY OK: Momentum aligned"
-
-                    if abs(short_momentum) < consolidation_threshold:
-                        return True, f"BUY OK: Consolidation phase (<{consolidation_threshold:.2f})"
-
-                elif signal_direction == "SELL":  
-                    if momentum_direction == "DOWN" and short_momentum < -bounce_threshold:
-                        return False, f"SELL blocked: Price falling DOWN (${short_momentum:.2f} < -{bounce_threshold:.2f})"
-
-                    if macd_hist_direction == "FALLING" and momentum_direction == "DOWN":
-                        return False, f"SELL blocked: MACD bearish + price falling"
-
-                    if price_vs_ema == "BELOW" and momentum_direction == "DOWN":
-                        return False, f"SELL blocked: Price below EMA9 and falling"
-
-                    if momentum_direction == "UP":
-                        return True, f"SELL OK: Momentum aligned"
-
-                    if abs(short_momentum) < consolidation_threshold:
-                        return True, f"SELL OK: Consolidation phase (<{consolidation_threshold:.2f})"
+            ema_9 = recent_5["ema_9"].to_list()[-1] if "ema_9" in df.columns else None
+            
+            # Look at the current active candle
+            current_open = recent_5["open"].to_list()[-1]
+            current_close = recent_5["close"].to_list()[-1]
+            current_candle_size = current_close - current_open
+            
+            surge_limit = atr * 0.30
+            
+            # --- NEW: MACRO TREND SHIELD (50-Period Baseline) ---
+            # Calculates the moving average of the last 50 candles to find the real trend
+            recent_50 = df.tail(50)
+            if len(recent_50) == 50:
+                macro_baseline = sum(recent_50["close"].to_list()) / 50.0
             else:
-                if signal_direction == "SELL":  
-                    if momentum_direction == "UP" and short_momentum > bounce_threshold:
-                        return False, f"SELL blocked: Price bouncing UP (+${short_momentum:.2f} > {bounce_threshold:.2f})"
+                macro_baseline = current_close # Fallback if not enough data
+            # ----------------------------------------------------
 
-                    if macd_hist_direction == "RISING" and momentum_direction == "UP":
-                        return False, f"SELL blocked: MACD bullish + price rising"
+            # --- THE RUBBER BAND MATH ---
+            recent_floor = min(recent_20["low"].to_list())
+            recent_ceiling = max(recent_20["high"].to_list())
 
-                    if price_vs_ema == "ABOVE" and momentum_direction == "UP":
-                        return False, f"SELL blocked: Price above EMA9 and rising"
+            if signal_direction == "BUY":  
+                # 0. NEW: MACRO TREND BLOCK
+                # If price is significantly below the 50-period average, DO NOT catch the falling knife!
+                if current_price < macro_baseline - (atr * 0.5):
+                    return False, f"BUY blocked: Macro trend is BEARISH (${(macro_baseline - current_price):.2f} below 50-MA). Do not buy the crash."
 
-                    if momentum_direction == "DOWN":
-                        return True, f"SELL OK: Momentum aligned"
+                # 1. Block FOMO (Buying a green candle)
+                if current_candle_size > 0:
+                    return False, f"BUY blocked: Candle is GREEN (+${current_candle_size:.2f}). Wait for a red dip."
+                
+                # 2. Block Falling Knife (Buying a violent crash)
+                if current_candle_size < -surge_limit:
+                    return False, f"BUY blocked: Candle is crashing hard RED (${current_candle_size:.2f}). Unsafe to buy."
+                
+                # 3. Block Parabolic Overextension (The Mount Everest Trap)
+                # If price is stretched more than 2.5x ATR from the floor, do NOT buy the top!
+                if current_price > recent_floor + (atr * 2.5):
+                    return False, f"BUY blocked: Parabolic Overextension. Price is +${(current_price - recent_floor):.2f} above recent floor. Wait for crash."
 
-                    if abs(short_momentum) < consolidation_threshold:
-                        return True, f"SELL OK: Consolidation phase (<{consolidation_threshold:.2f})"
+                # 4. Block Structural Breaks
+                if ema_9:
+                    if current_price > ema_9 + (atr * 0.4):
+                        return False, f"BUY blocked: Price floating too far above EMA9. Wait for pullback."
+                    if current_price < ema_9 - (atr * 0.5):
+                        return False, f"BUY blocked: Price crashed below EMA9! Trend broken, do not buy."
 
-                elif signal_direction == "BUY":  
-                    if momentum_direction == "DOWN" and short_momentum < -bounce_threshold:
-                        return False, f"BUY blocked: Price falling DOWN (${short_momentum:.2f} < -{bounce_threshold:.2f})"
+                return True, "BUY OK: Safe red dip detected."
 
-                    if macd_hist_direction == "FALLING" and momentum_direction == "DOWN":
-                        return False, f"BUY blocked: MACD bearish + price falling"
+            elif signal_direction == "SELL":  
+                # 0. NEW: MACRO TREND BLOCK
+                # If price is significantly above the 50-period average, DO NOT step in front of the train!
+                if current_price > macro_baseline + (atr * 0.5):
+                    return False, f"SELL blocked: Macro trend is BULLISH (+${(current_price - macro_baseline):.2f} above 50-MA). Do not sell the rally."
 
-                    if price_vs_ema == "BELOW" and momentum_direction == "DOWN":
-                        return False, f"BUY blocked: Price below EMA9 and falling"
+                # 1. Block FOMO (Selling a red candle)
+                if current_candle_size < 0:
+                    return False, f"SELL blocked: Candle is RED (${current_candle_size:.2f}). Wait for a green rally."
+                
+                # 2. Block Catching Rockets (Selling into a massive green surge)
+                if current_candle_size > surge_limit:
+                    return False, f"SELL blocked: Candle is surging hard GREEN (+${current_candle_size:.2f}). Unsafe to sell."
+                    
+                # 3. Block Parabolic Overextension (The Bottomless Pit Trap)
+                # If price is stretched more than 2.5x ATR from the ceiling, do NOT sell the bottom!
+                if current_price < recent_ceiling - (atr * 2.5):
+                    return False, f"SELL blocked: Parabolic Overextension. Price is -${(recent_ceiling - current_price):.2f} below recent peak. Wait for bounce."
+                
+                # 4. Block Structural Breaks
+                if ema_9:
+                    if current_price < ema_9 - (atr * 0.4):
+                        return False, f"SELL blocked: Price dumped too far below EMA9. Wait for rally."
+                    if current_price > ema_9 + (atr * 0.5):
+                        return False, f"SELL blocked: Price surged above EMA9! Trend broken, do not sell."
 
-                    if momentum_direction == "UP":
-                        return True, f"BUY OK: Momentum aligned"
+                return True, "SELL OK: Safe green rally detected."
 
-                    if abs(short_momentum) < consolidation_threshold:
-                        return True, f"BUY OK: Consolidation phase (<{consolidation_threshold:.2f})"
-
-            return True, f"Pullback check passed (mom={momentum_direction}, macd={macd_hist_direction})"
+            return True, "Pullback check passed"
 
         except Exception as e:
             logger.warning(f"Pullback filter error: {e}")
@@ -2352,12 +2331,12 @@ class TradingBot:
             logger.error(f"Order failed: {result.comment} (code: {result.retcode})")
 
     async def _verify_and_execute_delayed(self, original_signal, position_result, original_regime_state):
-        """Waits 10 seconds and re-evaluates the trend before executing."""
+        """Waits 5 seconds and re-evaluates the trend before executing."""
         self._is_verifying_trade = True
-        logger.info(f"⏳ Trade signal found ({original_signal.signal_type}). Waiting 10 seconds to confirm trend...")
+        logger.info(f"⏳ Trade signal found ({original_signal.signal_type}). Waiting 5 seconds to confirm trend...")
         
         try:
-            await asyncio.sleep(10)
+            await asyncio.sleep(5)
             
             # Fetch latest data to confirm trend
             df_check = self.mt5.get_market_data(
@@ -2367,7 +2346,7 @@ class TradingBot:
             )
             
             if len(df_check) == 0:
-                logger.warning("Failed to fetch data for 10s verification. Cancelling  trade.")
+                logger.warning("Failed to fetch data for 5s verification. Cancelling  trade.")
                 return
                 
             df_check = self.features.calculate_all(df_check, include_ml_features=True)
@@ -2416,11 +2395,30 @@ class TradingBot:
             new_final_signal = self._combine_signals(smc_sig, ml_pred, original_regime_state)
 
             if new_final_signal is None or new_final_signal.signal_type != original_signal.signal_type:
-                logger.warning(f"❌ 10s Verification Failed! Trend weakened or reversed. Trade cancelled.")
+                logger.warning(f"❌ 5s Verification Failed! Trend weakened or reversed. Trade cancelled.")
                 return
                 
-            # If everything is still aligned, execute!
-            logger.info(f"✅ 10s Verification Passed! Trend is still {original_signal.signal_type}. Executing trade...")
+            # ---> NEW: RE-CHECK FOMO & PULLBACK AFTER SLEEPING <---
+            current_open = df_check["open"].tail(1).item()
+            current_price_check = df_check["close"].tail(1).item()
+            
+            # 1. Re-check Candle Behavior (Don't buy if the candle became a massive green spike while sleeping)
+            if new_final_signal.signal_type == "BUY" and current_price_check > current_open:
+                logger.warning(f"❌ 5s Verification Failed! Candle surged GREEN during wait. Avoiding FOMO peak.")
+                return
+            elif new_final_signal.signal_type == "SELL" and current_price_check < current_open:
+                logger.warning(f"❌ 5s Verification Failed! Candle dumped RED during wait. Avoiding FOMO bottom.")
+                return
+                
+            # 2. Re-check Pullback Filter (Ensure it hasn't turned into a falling knife)
+            can_trade_pb, pb_reason = self._check_pullback_filter(df_check, new_final_signal.signal_type, current_price_check)
+            if not can_trade_pb:
+                logger.warning(f"❌ 5s Verification Failed! Market overextended during wait: {pb_reason}")
+                return
+            # --------------------------------------------------------
+
+            # If everything is still aligned and safe, execute!
+            logger.info(f"✅ 5s Verification Passed! Trend is still {original_signal.signal_type} and entry is safe. Executing trade...")
             
             # Update entry price to the exact newest tick
             tick = self.mt5.get_tick(self.config.symbol)
@@ -2430,7 +2428,7 @@ class TradingBot:
             await self._execute_trade_safe(original_signal, position_result, original_regime_state)
             
         except Exception as e:
-            logger.error(f"Error during 10s verification: {e}")
+            logger.error(f"Error during 5s verification: {e}")
         finally:
             self._is_verifying_trade = False
 
@@ -2673,11 +2671,45 @@ class TradingBot:
                     result = self.mt5.close_position(action.ticket)
                     if result.success:
                         profit = 0
+                        direction = "BUY" # Default fallback
+                        
+                        # Extract BOTH profit and direction
                         for row in open_positions.iter_rows(named=True):
                             if row["ticket"] == action.ticket:
                                 profit = row.get("profit", 0)
+                                p_type = row.get("type", 0)
+                                direction = "BUY" if p_type in [0, "BUY", "Buy", "buy"] else "SELL"
                                 break
+                                
                         risk_result = self.smart_risk.record_trade_result(profit)
+
+                        # ---> WIN/LOSS ALTERNATOR LOGIC (Normal Close) <---
+                        if profit > 1.00: 
+                            self._forced_next_direction = direction 
+                            logger.warning(f"🟢 Trade WON (+${profit:.2f}). Next trade stays {self._forced_next_direction}!")
+                        elif profit > -1.50:
+                            self._forced_next_direction = direction
+                            logger.warning(f"🟡 Trade SCRATCHED/BREAKEVEN (${profit:.2f}). Ignoring noise, next trade stays {self._forced_next_direction}!")
+                        else:
+                            self._forced_next_direction = "BUY" if direction == "SELL" else "SELL"
+                            logger.warning(f"🔴 Trade LOST (${profit:.2f}). Next trade FLIPS to {self._forced_next_direction}!")
+                            
+                        self._save_forced_direction(self._forced_next_direction) 
+                        # --------------------------------------------------
+
+                        # ---> WIN/LOSS ALTERNATOR LOGIC (Normal Close) <---
+                        if profit > 1.00:
+                            self._forced_next_direction = direction
+                            logger.warning(f"🟢 Trade WON (+${profit:.2f}). Next trade stays {self._forced_next_direction}!")
+                        elif profit > -1.50:  # The Breakeven/Slippage Buffer
+                            self._forced_next_direction = direction
+                            logger.warning(f"🟡 Trade SCRATCHED/BREAKEVEN (${profit:.2f}). Ignoring noise, next trade stays {self._forced_next_direction}!")
+                        else:
+                            self._forced_next_direction = "BUY" if direction == "SELL" else "SELL"
+                            logger.warning(f"🔴 Trade LOST (${profit:.2f}). Next trade FLIPS to {self._forced_next_direction}!")
+                            
+                        self._save_forced_direction(self._forced_next_direction)
+                        # --------------------------------------------------
                         
                         # ---> 3-LOSS ADAPTIVE REGIME FLIP <---
                         # We let the AI pick the direction. We only invert the logic if the AI gets it wrong 3 times in a row.
@@ -2758,6 +2790,12 @@ class TradingBot:
                         _market_ctx[col if col != "histogram" else "macd_hist"] = (
                             vals.tail(1).item() if len(vals) > 0 else None
                         )
+                
+                # ---> ADD THIS SMC AWARENESS <---
+                if "market_structure" in df.columns:
+                    struct_val = df["market_structure"].tail(1).item()
+                    _market_ctx["smc_trend"] = "BUY" if struct_val == 1 else ("SELL" if struct_val == -1 else "NEUTRAL")
+                # --------------------------------
                 try:
                     _sess = self.session_filter.get_status_report()
                     _market_ctx["session_name"] = _sess.get("current_session", "")
@@ -2804,14 +2842,17 @@ class TradingBot:
                     risk_result = self.smart_risk.record_trade_result(profit)
                     
                     # ---> WIN/LOSS ALTERNATOR LOGIC <---
-                    if profit > 0:
-                        self._forced_next_direction = None # <--- CHANGE TO None
-                        logger.warning(f"🟢 Trade WON (+${profit:.2f}). AI will decide next trade!")
+                    if profit > 1.00: 
+                        self._forced_next_direction = direction 
+                        logger.warning(f"🟢 Trade WON (+${profit:.2f}). Next trade stays {self._forced_next_direction}!")
+                    elif profit > -1.50:
+                        self._forced_next_direction = direction
+                        logger.warning(f"🟡 Trade SCRATCHED/BREAKEVEN (${profit:.2f}). Ignoring noise, next trade stays {self._forced_next_direction}!")
                     else:
-                        self._forced_next_direction = None # <--- CHANGE TO None
-                        logger.warning(f"🔴 Trade LOST (${profit:.2f}). AI will decide next trade!")
+                        self._forced_next_direction = "BUY" if direction == "SELL" else "SELL"
+                        logger.warning(f"🔴 Trade LOST (${profit:.2f}). Next trade FLIPS to {self._forced_next_direction}!")
                         
-                    self._save_forced_direction("") # <--- CLEAR THE FILE
+                    self._save_forced_direction(self._forced_next_direction) 
                     # --------------------------------------------------
 
                     self.smart_risk.unregister_position(ticket)

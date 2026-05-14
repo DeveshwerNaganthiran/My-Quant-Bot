@@ -697,21 +697,9 @@ class SMCAnalyzer:
     
     def generate_signal(self, df: pl.DataFrame) -> Optional[SMCSignal]:
         """
-        Generate trading signal based on SMC analysis.
-
-        Signal Logic (RELAXED for active trading):
-        1. Check market structure (BOS/CHoCH) - extended lookback
-        2. Find valid FVG OR Order Block in recent candles
-        3. Generate signal based on best available setup
-
-        Args:
-            df: DataFrame with all SMC indicators
-
-        Returns:
-            SMCSignal if valid setup found, None otherwise
+        Generate trading signal based on SMC analysis & Visual Chart Patterns.
         """
-        # Get latest row
-        if len(df) < 10:
+        if len(df) < 50:
             return None
 
         latest = df.tail(1)
@@ -720,31 +708,25 @@ class SMCAnalyzer:
         current_low = latest["low"].item()
         market_structure = latest["market_structure"].item() if "market_structure" in df.columns else 0
 
-        # Check for recent BOS/CHoCH (extended to 10 candles)
-        recent_df = df.tail(40)
+        recent_df = df.tail(10)
         recent_bos = recent_df["bos"].to_list() if "bos" in df.columns else []
         recent_choch = recent_df["choch"].to_list() if "choch" in df.columns else []
 
-        # Check for FVG in recent candles (not just current)
         recent_fvg_bull = recent_df["is_fvg_bull"].to_list() if "is_fvg_bull" in df.columns else []
         recent_fvg_bear = recent_df["is_fvg_bear"].to_list() if "is_fvg_bear" in df.columns else []
 
-        # Get FVG zones from recent candles
         fvg_bottoms = recent_df["fvg_bottom"].to_list() if "fvg_bottom" in df.columns else []
         fvg_tops = recent_df["fvg_top"].to_list() if "fvg_top" in df.columns else []
 
-        # Check for Order Block in recent candles
         recent_obs = recent_df["ob"].to_list() if "ob" in df.columns else []
         ob_tops = recent_df["ob_top"].to_list() if "ob_top" in df.columns else []
         ob_bottoms = recent_df["ob_bottom"].to_list() if "ob_bottom" in df.columns else []
 
-        # Get swing levels for SL
         last_swing_high = latest["last_swing_high"].item() if "last_swing_high" in df.columns else None
         last_swing_low = latest["last_swing_low"].item() if "last_swing_low" in df.columns else None
 
         signal = None
 
-        # Determine if there's a recent bullish/bearish setup
         has_bullish_break = 1 in recent_bos or 1 in recent_choch
         has_bearish_break = -1 in recent_bos or -1 in recent_choch
         has_bullish_fvg = any(recent_fvg_bull)
@@ -752,209 +734,164 @@ class SMCAnalyzer:
         has_bullish_ob = 1 in recent_obs
         has_bearish_ob = -1 in recent_obs
 
-        # === STRICT CONFLICT RESOLUTION (FRESHEST SIGNAL WINS) ===
-        # 1. Find which structure break happened most recently
+        # === STRICT CONFLICT RESOLUTION ===
         bull_break_idx = max([i for i, x in enumerate(recent_bos) if x == 1] + [i for i, x in enumerate(recent_choch) if x == 1] + [-1])
         bear_break_idx = max([i for i, x in enumerate(recent_bos) if x == -1] + [i for i, x in enumerate(recent_choch) if x == -1] + [-1])
 
         if bull_break_idx > bear_break_idx:
-            has_bearish_break = False  # Ignore older bearish break
+            has_bearish_break = False
         elif bear_break_idx > bull_break_idx:
-            has_bullish_break = False  # Ignore older bullish break
+            has_bullish_break = False
 
-        # 2. Find which zone (FVG/OB) formed most recently
         bull_zone_idx = max([i for i, x in enumerate(recent_fvg_bull) if x] + [i for i, x in enumerate(recent_obs) if x == 1] + [-1])
         bear_zone_idx = max([i for i, x in enumerate(recent_fvg_bear) if x] + [i for i, x in enumerate(recent_obs) if x == -1] + [-1])
 
-        # 3. If the SELL zone is newer, completely kill the BUY setup
         if bear_zone_idx > bull_zone_idx:
-            has_bullish_fvg = False
-            has_bullish_ob = False
-            market_structure = -1  # Force the bot to evaluate bearish conditions
-            
-        # 4. If the BUY zone is newer, completely kill the SELL setup
+            has_bullish_fvg, has_bullish_ob = False, False
+            market_structure = -1
         elif bull_zone_idx > bear_zone_idx:
-            has_bearish_fvg = False
-            has_bearish_ob = False
-            market_structure = 1   # Force the bot to evaluate bullish conditions
+            has_bearish_fvg, has_bearish_ob = False, False
+            market_structure = 1
 
-        # Get valid FVG/OB zone for entry
         def get_valid_bullish_zone():
-            # Find most recent bullish FVG or OB
             for i in range(len(recent_fvg_bull) - 1, -1, -1):
-                if recent_fvg_bull[i] and fvg_bottoms[i] is not None:
-                    return fvg_bottoms[i], "FVG"
+                if recent_fvg_bull[i] and fvg_bottoms[i] is not None: return fvg_bottoms[i], "FVG"
             for i in range(len(recent_obs) - 1, -1, -1):
-                if recent_obs[i] == 1 and ob_bottoms[i] is not None:
-                    return ob_bottoms[i], "OB"
+                if recent_obs[i] == 1 and ob_bottoms[i] is not None: return ob_bottoms[i], "OB"
             return None, None
 
         def get_valid_bearish_zone():
-            # Find most recent bearish FVG or OB
             for i in range(len(recent_fvg_bear) - 1, -1, -1):
-                if recent_fvg_bear[i] and fvg_tops[i] is not None:
-                    return fvg_tops[i], "FVG"
+                if recent_fvg_bear[i] and fvg_tops[i] is not None: return fvg_tops[i], "FVG"
             for i in range(len(recent_obs) - 1, -1, -1):
-                if recent_obs[i] == -1 and ob_tops[i] is not None:
-                    return ob_tops[i], "OB"
+                if recent_obs[i] == -1 and ob_tops[i] is not None: return ob_tops[i], "OB"
             return None, None
 
-        # Get ATR for dynamic SL/TP calculation
-        # FIX: Realistic ATR fallback for XAUUSD (~$12-15 typical)
         if "atr" in df.columns:
             atr = latest["atr"].item()
-            if atr is None or atr <= 0 or atr > current_close * 0.05:  # Sanity check
-                atr = 12.0  # Default realistic ATR for XAUUSD
+            if atr is None or atr <= 0 or atr > current_close * 0.05: atr = 12.0
         else:
-            atr = 12.0  # Default realistic ATR for XAUUSD
+            atr = 12.0
 
-        # SL: 1.5-2 ATR distance (protects against noise)
         min_sl_distance = 1.5 * atr
-
-        # === FIXED RR RATIO 1:1.5 ===
-        # Based on backtest analysis: RR 1:2 only hits TP 14% of the time
-        # RR 1:1.5 is more realistic for higher hit rate
         min_rr_ratio = 1.5
 
-        # BULLISH SIGNAL CONDITIONS
-        # Need: bullish structure OR recent bullish break, AND (FVG OR OB)
-        if ((market_structure == 1 or has_bullish_break) and
+        # =========================================================================
+        # === NEW: VISUAL PATTERN RECOGNITION (ZIG-ZAG, W-PATTERN, M-PATTERN) ===
+        # =========================================================================
+        pattern_df = df.tail(50)
+        
+        # 1. Zig-Zag / Chop Filter (Are we stuck in a tight 15-candle box?)
+        recent_highs = pattern_df["high"].to_list()[-15:]
+        recent_lows = pattern_df["low"].to_list()[-15:]
+        chop_range = max(recent_highs) - min(recent_lows)
+        
+        is_choppy = chop_range < (atr * 1.2)  # Range is too tight (Chop/Zig-Zag)
+        
+        if is_choppy:
+            logger.debug(f"SMC Blocked: Market is Zig-Zagging in a tight box (${chop_range:.2f} range).")
+            return None  # Block the trade completely
+            
+        # 2. Imperfect "W" (Double Bottom) and "M" (Double Top) Patterns
+        # Extract the exact index (bar number) of the swings so we can measure distance
+        swing_low_indices = df.with_row_count().filter(pl.col("swing_low") == -1)["row_nr"].to_list()
+        swing_high_indices = df.with_row_count().filter(pl.col("swing_high") == 1)["row_nr"].to_list()
+        
+        swing_lows = [x for x in pattern_df["swing_low_level"].to_list() if x is not None]
+        swing_highs = [x for x in pattern_df["swing_high_level"].to_list() if x is not None]
+        
+        is_w_pattern = False
+        is_m_pattern = False
+        
+        pattern_tolerance = current_close * 0.0015 
+        ema_9 = latest["ema_9"].item() if "ema_9" in df.columns else current_close
+
+        if len(swing_lows) >= 2 and len(swing_low_indices) >= 2:
+            # 1. Price match: The two bottoms must be roughly equal
+            if abs(swing_lows[-1] - swing_lows[-2]) <= pattern_tolerance:
+                # 2. Location: MUST form below the EMA (a true floor)
+                if swing_lows[-1] <= ema_9 + (atr * 0.2):
+                    # 3. STRICT TIME DISTANCE: The two bottoms must be separated by at least 15 candles!
+                    # If they are closer than 15 minutes, it's just noisy chop, NOT a structural "W".
+                    if swing_low_indices[-1] - swing_low_indices[-2] >= 15:
+                        is_w_pattern = True  
+                
+        if len(swing_highs) >= 2 and len(swing_high_indices) >= 2:
+            if abs(swing_highs[-1] - swing_highs[-2]) <= pattern_tolerance:
+                if swing_highs[-1] >= ema_9 - (atr * 0.2):
+                    # Time distance check for "M" pattern (15 candles minimum)
+                    if swing_high_indices[-1] - swing_high_indices[-2] >= 15:
+                        is_m_pattern = True
+        # =========================================================================
+
+        # === BULLISH SIGNAL CONDITIONS ===
+        # Notice we added `is_w_pattern` here! If it sees a W, it won't wait for a late BOS peak!
+        if ((market_structure == 1 or has_bullish_break or is_w_pattern) and
             (has_bullish_fvg or has_bullish_ob)):
 
-            # FOR BULLISH (BUY)
             entry_zone, zone_type = get_valid_bullish_zone()
             entry = current_close
 
-            # STRICT PULLBACK FIX: Force price to retrace to the zone
             if entry_zone is not None:
-                # Calculate literal distance in dollars (for Gold)
-                distance_to_zone = entry - entry_zone 
-                
-                # If price is more than $0.50 above the Order Block/FVG, WAIT.
-                # Do not FOMO buy the peak! Let it drop back into the zone.
-                if distance_to_zone > 0.50: 
-                    logger.debug(f"BUY Signal skipped: Price (${entry:.2f}) hasn't pulled back to {zone_type} (${entry_zone:.2f}) yet.")
+                distance_to_zone = (entry - entry_zone) / entry
+                if distance_to_zone > 0.0015: 
                     return None
 
-            # SL below swing low or ATR-based (use the FURTHER one to prevent whipsaw)
             swing_sl = last_swing_low if last_swing_low and last_swing_low < entry else None
             atr_sl = entry - min_sl_distance
+            sl = min(swing_sl, atr_sl) if swing_sl else atr_sl
+            if entry - sl < min_sl_distance: sl = entry - min_sl_distance
 
-            if swing_sl:
-                # Use the further SL (more protection)
-                sl = min(swing_sl, atr_sl)
-            else:
-                sl = atr_sl
-
-            # Ensure SL is at least min_sl_distance away
-            if entry - sl < min_sl_distance:
-                sl = entry - min_sl_distance
-
-            # FIXED TP at RR 1:1.5
             risk = entry - sl
             tp = entry + (risk * min_rr_ratio)
 
-            # VALIDATE RR before creating signal (tolerance for floating point)
             actual_rr = (tp - entry) / risk if risk > 0 else 0
-            if actual_rr < min_rr_ratio - 0.01:
-                logger.debug(f"Skipping BUY signal: RR {actual_rr:.2f} < {min_rr_ratio}")
-                signal = None
-            else:
-                # Calibrated confidence calculation
-                conf = self.calculate_confidence(
-                    signal_type="BUY",
-                    market_structure=market_structure,
-                    has_break=has_bullish_break,
-                    has_fvg=has_bullish_fvg,
-                    has_ob=has_bullish_ob,
-                    df=df,
-                )
+            if actual_rr >= min_rr_ratio - 0.01:
+                conf = self.calculate_confidence("BUY", market_structure, has_bullish_break, has_bullish_fvg, has_bullish_ob, df)
 
                 reason_parts = []
-                if has_bullish_break:
-                    reason_parts.append("BOS/CHoCH")
-                if zone_type == "FVG":
-                    reason_parts.append("FVG")
-                if zone_type == "OB":
-                    reason_parts.append("OB")
+                if has_bullish_break: reason_parts.append("BOS/CHoCH")
+                if is_w_pattern: 
+                    reason_parts.append("'W' Double Bottom")
+                    conf = min(0.85, conf + 0.15)  # Massive confidence boost for a W pattern
+                if zone_type == "FVG": reason_parts.append("FVG")
+                if zone_type == "OB": reason_parts.append("OB")
 
                 signal = SMCSignal(
-                    signal_type="BUY",
-                    entry_price=entry,
-                    stop_loss=sl,
-                    take_profit=tp,
-                    confidence=conf,
-                    reason="Bullish " + " + ".join(reason_parts),
+                    signal_type="BUY", entry_price=entry, stop_loss=sl, take_profit=tp,
+                    confidence=conf, reason="Bullish " + " + ".join(reason_parts),
                 )
 
-        # BEARISH SIGNAL CONDITIONS
-        elif ((market_structure == -1 or has_bearish_break) and
+        # === BEARISH SIGNAL CONDITIONS ===
+        elif ((market_structure == -1 or has_bearish_break or is_m_pattern) and
               (has_bearish_fvg or has_bearish_ob)):
 
             entry_zone, zone_type = get_valid_bearish_zone()
             entry = current_close
 
-            # STRICT PULLBACK FIX: Force price to bounce back up to the zone
-            if entry_zone is not None:
-                distance_to_zone = entry_zone - entry 
-                
-                # If price is more than $0.50 below the Order Block/FVG, WAIT.
-                # Do not FOMO sell the bottom! Let it rally back into the zone.
-                if distance_to_zone > 0.50: 
-                    logger.debug(f"SELL Signal skipped: Price (${entry:.2f}) hasn't pulled back up to {zone_type} (${entry_zone:.2f}) yet.")
-                    return None
-
-            # SL above swing high or ATR-based (use the FURTHER one to prevent whipsaw)
-
-            # SL above swing high or ATR-based (use the FURTHER one to prevent whipsaw)
             swing_sl = last_swing_high if last_swing_high and last_swing_high > entry else None
             atr_sl = entry + min_sl_distance
+            sl = max(swing_sl, atr_sl) if swing_sl else atr_sl
+            if sl - entry < min_sl_distance: sl = entry + min_sl_distance
 
-            if swing_sl:
-                # Use the further SL (more protection)
-                sl = max(swing_sl, atr_sl)
-            else:
-                sl = atr_sl
-
-            # Ensure SL is at least min_sl_distance away
-            if sl - entry < min_sl_distance:
-                sl = entry + min_sl_distance
-
-            # FIXED TP at RR 1:1.5
             risk = sl - entry
             tp = entry - (risk * min_rr_ratio)
 
-            # VALIDATE RR before creating signal (tolerance for floating point)
             actual_rr = (entry - tp) / risk if risk > 0 else 0
-            if actual_rr < min_rr_ratio - 0.01:
-                logger.debug(f"Skipping SELL signal: RR {actual_rr:.2f} < {min_rr_ratio}")
-                signal = None
-            else:
-                # Calibrated confidence calculation
-                conf = self.calculate_confidence(
-                    signal_type="SELL",
-                    market_structure=market_structure,
-                    has_break=has_bearish_break,
-                    has_fvg=has_bearish_fvg,
-                    has_ob=has_bearish_ob,
-                    df=df,
-                )
+            if actual_rr >= min_rr_ratio - 0.01:
+                conf = self.calculate_confidence("SELL", market_structure, has_bearish_break, has_bearish_fvg, has_bearish_ob, df)
 
                 reason_parts = []
-                if has_bearish_break:
-                    reason_parts.append("BOS/CHoCH")
-                if zone_type == "FVG":
-                    reason_parts.append("FVG")
-                if zone_type == "OB":
-                    reason_parts.append("OB")
+                if has_bearish_break: reason_parts.append("BOS/CHoCH")
+                if is_m_pattern: 
+                    reason_parts.append("'M' Double Top")
+                    conf = min(0.85, conf + 0.15)  # Massive confidence boost for an M pattern
+                if zone_type == "FVG": reason_parts.append("FVG")
+                if zone_type == "OB": reason_parts.append("OB")
 
                 signal = SMCSignal(
-                    signal_type="SELL",
-                    entry_price=entry,
-                    stop_loss=sl,
-                    take_profit=tp,
-                    confidence=min(conf, 0.85),
-                    reason="Bearish " + " + ".join(reason_parts),
+                    signal_type="SELL", entry_price=entry, stop_loss=sl, take_profit=tp,
+                    confidence=min(conf, 0.85), reason="Bearish " + " + ".join(reason_parts),
                 )
 
         if signal:

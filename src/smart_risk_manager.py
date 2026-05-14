@@ -1526,8 +1526,8 @@ class SmartRiskManager:
 
         # === PRIORITY 0: EMERGENCY SAFETY CHECKS ===
 
-        # 1. THE "NEVER GO RED" SHIELD (Upgraded to $1.50 Rule)
-        if guard.peak_profit >= 1.50 and current_profit <= 0.20:
+        # 1. THE "NEVER GO RED" SHIELD (Upgraded for 2-Second Latency Slippage)
+        if guard.peak_profit >= 4.00 and current_profit <= 2.00:
             return True, ExitReason.TAKE_PROFIT, f"[NEVER-GO-RED] Secured Breakeven (+${current_profit:.2f}). Peak was ${guard.peak_profit:.2f}"
         # 2. RELAXED PROFIT SHIELDS (Let the trades breathe!)
         # Lock in profit only on substantial peaks, not normal market noise
@@ -1729,7 +1729,8 @@ class SmartRiskManager:
                 profit_floor = max(atr_floor, stoch_floor)
                 floor_type = "STOCH" if stoch_floor > atr_floor else "ATR"
 
-                if current_profit < profit_floor and profit_floor > 0:
+                # Require the floor to be at least $2.00 above zero to absorb execution slippage
+                if current_profit < profit_floor and profit_floor > 2.00:
                     return True, ExitReason.TAKE_PROFIT, (
                         f"[ATR-TRAIL] Profit ${current_profit:.2f} < floor ${profit_floor:.2f} "
                         f"(peak ${guard.peak_profit:.2f}, trail {trail_atr:.2f}*ATR=${trail_atr*atr_unit:.1f}, "
@@ -1990,9 +1991,10 @@ class SmartRiskManager:
             if guard.stagnation_seconds >= 900 and abs(current_profit) > stagnant_loss and trade_age_minutes >= 15:
                 return True, ExitReason.TREND_REVERSAL, f"[STAGNANT] Loss ${abs(current_profit):.2f} stagnant {guard.stagnation_seconds:.0f}s — cutting"
 
-        # === CHECK 4: TREND REVERSAL (ATR-based) ===
-        # Close lebih cepat jika ML reversal + loss > 0.2 ATR
+        # === CHECK 4: TREND REVERSAL (SMC & ML) ===
         is_reversal = False
+        
+        # 1. ML Reversal Check
         if guard.direction == "BUY" and ml_signal == "SELL" and ml_confidence >= self.trend_reversal_threshold:
             is_reversal = True
             guard.reversal_warnings += 1
@@ -2000,20 +2002,42 @@ class SmartRiskManager:
             is_reversal = True
             guard.reversal_warnings += 1
 
-        # ML reversal + loss > 0.2 ATR -> cut (shorter grace: 10 min)
-        if is_reversal and current_profit < reversal_loss:
-            if trade_age_minutes < grace_minutes:
-                logger.info(f"[GRACE] Reversal ({ml_signal} {ml_confidence:.0%}) loss ${current_profit:.2f} — holding {trade_age_minutes:.1f}m/{grace_minutes}m grace")
-            else:
-                return True, ExitReason.TREND_REVERSAL, f"[REVERSAL] {ml_signal} ({ml_confidence:.0%}) - Loss: ${current_profit:.2f}"
+        # 2. SMC Structure Reversal Check
+        smc_reversed = False
+        if market_context and "smc_trend" in market_context:
+            smc_trend = market_context.get("smc_trend", "NEUTRAL")
+            if guard.direction == "BUY" and smc_trend == "SELL":
+                is_reversal = True
+                smc_reversed = True
+                guard.reversal_warnings += 1
+            elif guard.direction == "SELL" and smc_trend == "BUY":
+                is_reversal = True
+                smc_reversed = True
+                guard.reversal_warnings += 1
+
+        # ---> NEW: THE "CHOP BUFFER" <---
+        # Cut the trade if reversed, BUT only if the loss is actually significant!
+        # Do not panic-cut on 1-minute noise if we are only down a few cents.
+        if is_reversal:
+            # If the SMC hard-flipped, give it a $2.50 tolerance buffer before cutting
+            if smc_reversed and current_profit <= -2.50:
+                return True, ExitReason.TREND_REVERSAL, f"[REVERSAL] Hard SMC Structure Flip! Cutting immediately - Loss: ${current_profit:.2f}"
+            
+            # If it's just the ML AI warning us, respect the standard ATR reversal_loss and grace period
+            elif not smc_reversed and current_profit < reversal_loss:
+                if trade_age_minutes < grace_minutes:
+                    logger.info(f"[GRACE] Weak reversal detected, loss ${current_profit:.2f} — holding {trade_age_minutes:.1f}m/{grace_minutes}m grace")
+                else:
+                    return True, ExitReason.TREND_REVERSAL, f"[REVERSAL] Indicators reversed against position - Loss: ${current_profit:.2f}"
 
         # 3x reversal warnings + loss > 0.3 ATR -> cut
-        if guard.reversal_warnings >= 6 and current_profit < warn_loss:
+        if guard.reversal_warnings >= 3 and current_profit < warn_loss:
             if trade_age_minutes < grace_minutes:
                 logger.info(f"[GRACE] {guard.reversal_warnings}x reversal warnings, loss ${current_profit:.2f} — holding {trade_age_minutes:.1f}m/{grace_minutes}m grace")
             else:
                 return True, ExitReason.TREND_REVERSAL, f"[WARN] {guard.reversal_warnings}x reversal warnings - Loss: ${current_profit:.2f}"
 
+        
         # === CHECK 5: ABSOLUTE BACKUP STOP (dynamic safety net) ===
         # v5d: BACKUP-SL now respects grace period.
         backup_loss_mult = max(0.7, loss_mult)
@@ -2226,9 +2250,9 @@ def create_smart_risk_manager(capital: float = 5000.0) -> SmartRiskManager:
         max_total_loss_percent=100000,      # Changed from 100.0
         max_loss_per_trade_percent=80.0,   # Changed from 30.0% (This caused the $39 loss!)
         emergency_sl_percent=80.0,   
-        max_lot_size=3,       # Changed from 40.0%
-        base_lot_size=0.05,#0.1                     
-        recovery_lot_size=0.05,               
+        max_lot_size=0.05,       # Changed from 40.0%
+        base_lot_size=0.01,#0.1                     
+        recovery_lot_size=0.01,               
         trend_reversal_threshold=0.65,      
         max_concurrent_positions=20,         
     )
