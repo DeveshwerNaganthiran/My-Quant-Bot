@@ -2333,7 +2333,7 @@ class TradingBot:
             logger.error(f"Order failed: {result.comment} (code: {result.retcode})")
 
     async def _verify_and_execute_delayed(self, original_signal, position_result, original_regime_state):
-        """Waits 5 seconds and re-evaluates the trend before executing."""
+        """Waits 5/  seconds and re-evaluates the trend before executing."""
         self._is_verifying_trade = True
         logger.info(f"⏳ Trade signal found ({original_signal.signal_type}). Waiting 5 seconds to confirm trend...")
         
