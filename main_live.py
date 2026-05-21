@@ -159,7 +159,7 @@ class TradingBot:
         self._execution_times: list = []
         self._current_date = date.today()
         self._models_loaded = False
-        self._trade_cooldown_seconds = 0
+        self._trade_cooldown_seconds = 10
         self._start_time = datetime.now()
         self._daily_start_balance: float = 0
         self._total_session_profit: float = 0

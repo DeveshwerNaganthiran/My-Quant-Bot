@@ -35,8 +35,8 @@ class RiskConfig:
     lot_step: float                # Lot size increment
     
     # --- NEW: Equity Based Scaling ---
-    use_equity_scaling: bool = True
-    equity_step: float = 5.0       # For every $5 in the account...
+    use_equity_scaling: bool = False   # <-- CHANGED TO FALSE
+    equity_step: float = 5.0       
     lot_per_step: float = 0.1
 
 @dataclass
@@ -254,7 +254,7 @@ class TradingConfig:
             max_lot_size=0.05,          
             min_lot_size=0.01,#0.1          # Micro account minimum lot
             lot_step=0.01,#0.1              # Micro account lot step
-            use_equity_scaling=True,
+            use_equity_scaling=False,
             equity_step=1.0,           # Every $1 in the account...
             lot_per_step=0.05#0.1           # ...adds 0.1 lots
         )

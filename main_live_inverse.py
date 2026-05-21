@@ -2335,10 +2335,10 @@ class TradingBot:
     async def _verify_and_execute_delayed(self, original_signal, position_result, original_regime_state):
         """Waits 5/  seconds and re-evaluates the trend before executing."""
         self._is_verifying_trade = True
-        logger.info(f"⏳ Trade signal found ({original_signal.signal_type}). Waiting 5 seconds to confirm trend...")
+        logger.info(f"⏳ Trade signal found ({original_signal.signal_type}). Waiting 1 seconds to confirm trend...")
         
         try:
-            await asyncio.sleep(5)
+            await asyncio.sleep(1)
             
             # Fetch latest data to confirm trend
             df_check = self.mt5.get_market_data(
@@ -2348,7 +2348,7 @@ class TradingBot:
             )
             
             if len(df_check) == 0:
-                logger.warning("Failed to fetch data for 5s verification. Cancelling  trade.")
+                logger.warning("Failed to fetch data for 1s verification. Cancelling  trade.")
                 return
                 
             df_check = self.features.calculate_all(df_check, include_ml_features=True)
@@ -2397,7 +2397,7 @@ class TradingBot:
             new_final_signal = self._combine_signals(smc_sig, ml_pred, original_regime_state)
 
             if new_final_signal is None or new_final_signal.signal_type != original_signal.signal_type:
-                logger.warning(f"❌ 5s Verification Failed! Trend weakened or reversed. Trade cancelled.")
+                logger.warning(f"❌ 1s Verification Failed! Trend weakened or reversed. Trade cancelled.")
                 return
                 
             # ---> NEW: RE-CHECK FOMO & PULLBACK AFTER SLEEPING <---
@@ -2406,21 +2406,21 @@ class TradingBot:
             
             # 1. Re-check Candle Behavior (Don't buy if the candle became a massive green spike while sleeping)
             if new_final_signal.signal_type == "BUY" and current_price_check > current_open:
-                logger.warning(f"❌ 5s Verification Failed! Candle surged GREEN during wait. Avoiding FOMO peak.")
+                logger.warning(f"❌ 1s Verification Failed! Candle surged GREEN during wait. Avoiding FOMO peak.")
                 return
             elif new_final_signal.signal_type == "SELL" and current_price_check < current_open:
-                logger.warning(f"❌ 5s Verification Failed! Candle dumped RED during wait. Avoiding FOMO bottom.")
+                logger.warning(f"❌ 1s Verification Failed! Candle dumped RED during wait. Avoiding FOMO bottom.")
                 return
                 
             # 2. Re-check Pullback Filter (Ensure it hasn't turned into a falling knife)
             can_trade_pb, pb_reason = self._check_pullback_filter(df_check, new_final_signal.signal_type, current_price_check)
             if not can_trade_pb:
-                logger.warning(f"❌ 5s Verification Failed! Market overextended during wait: {pb_reason}")
+                logger.warning(f"❌ 1s Verification Failed! Market overextended during wait: {pb_reason}")
                 return
             # --------------------------------------------------------
 
             # If everything is still aligned and safe, execute!
-            logger.info(f"✅ 5s Verification Passed! Trend is still {original_signal.signal_type} and entry is safe. Executing trade...")
+            logger.info(f"✅ 1s Verification Passed! Trend is still {original_signal.signal_type} and entry is safe. Executing trade...")
             
             # Update entry price to the exact newest tick
             tick = self.mt5.get_tick(self.config.symbol)
@@ -2430,7 +2430,7 @@ class TradingBot:
             await self._execute_trade_safe(original_signal, position_result, original_regime_state)
             
         except Exception as e:
-            logger.error(f"Error during 5s verification: {e}")
+            logger.error(f"Error during 1s verification: {e}")
         finally:
             self._is_verifying_trade = False
 
