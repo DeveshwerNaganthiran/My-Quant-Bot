@@ -75,10 +75,10 @@ class TradingModel:
             "tree_method": "hist",
             "device": "cpu",
             "min_child_weight": 50,    # FIXED: Require at least 50 samples to make a rule (Kills noise)
-            "subsample": 0.8,          
-            "colsample_bytree": 0.8,   
-            "reg_alpha": 0.5,          # FIXED: Increased L1 penalty to drop useless features
-            "reg_lambda": 2.0,         # FIXED: Increased L2 penalty for smoother weights
+            "subsample": 0.7,          
+            "colsample_bytree": 0.5,   
+            "reg_alpha": 1.0,          # FIXED: Increased L1 penalty to drop useless features
+            "reg_lambda": 1.0,         # FIXED: Increased L2 penalty for smoother weights
             "gamma": 1.0,              # FIXED: Require massive loss reduction to split
             "scale_pos_weight": 1.0    
         }

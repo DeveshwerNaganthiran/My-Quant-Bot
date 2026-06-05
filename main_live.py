@@ -848,6 +848,48 @@ class TradingBot:
 
         self.mt5.disconnect()
         self._log_summary()
+
+    async def execute_single_cycle(self):
+        """Runs exactly one iteration of the trading logic for the RL Supervisor."""
+        trade_result = {"trade_taken": False, "pnl": 0.0, "win": False}
+        
+        try:
+            # 1. Ensure MT5 is connected
+            if not self.mt5.ensure_connected():
+                logger.warning("MT5 disconnected during single cycle.")
+                return trade_result
+
+            # Store the last trade time to detect if a new trade is placed
+            prev_trade_time = self._last_trade_time
+
+            # 2. Manage existing open trades (Trailing SL, TP, Emergency Close)
+            await self._position_check_only()
+
+            # 3. Scan the market for new entry signals
+            await self._trading_iteration()
+            
+            # 4. Wait for your 1-second Verification delay to finish
+            if getattr(self, '_is_verifying_trade', False):
+                await asyncio.sleep(1.5) # Wait for _verify_and_execute_delayed to complete
+            
+            # 5. Check if a new trade was successfully executed
+            if self._last_trade_time != prev_trade_time:
+                trade_result["trade_taken"] = True
+                # Note: In live trading, PnL is 0 at the exact moment of entry.
+                # Your TradeLogger database will track the final PnL when the trade actually closes.
+                trade_result["pnl"] = 0.0 
+                trade_result["win"] = False
+
+            # Update dashboard and loop count just like the main loop did
+            self._loop_count += 1
+            self._write_dashboard_status()
+                
+        except Exception as e:
+            logger.error(f"Error in single cycle: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
+            
+        return trade_result
     
     def _sync_position_guards(self):
         try:
@@ -1767,7 +1809,7 @@ class TradingBot:
         # ACTUALLY BLOCK THE TRADE IF OVEREXTENDED
         if not can_trade_pullback:
             logger.info(f"🚫 Entry Filter Blocked: {pb_reason}")
-            return
+            #return
         
         mtf_passed, mtf_detail = await self._check_mtf_confluence(final_signal.signal_type)
         
@@ -1794,13 +1836,13 @@ class TradingBot:
                 if final_signal.signal_type == "BUY" and current_rsi > 70:
                     logger.warning(f"🚫 BUY blocked: RSI is {current_rsi:.1f} (Overbought). Market is at the ceiling!")
                     self._last_filter_results.append({"name": "Border Filter", "passed": False, "detail": f"RSI {current_rsi:.1f} > 70"})
-                    return  # Stops execution
+                    #return  # Stops execution
                 
                 # Do not SELL if the market is already at the floor (<30 RSI)
                 elif final_signal.signal_type == "SELL" and current_rsi < 30:
                     logger.warning(f"🚫 SELL blocked: RSI is {current_rsi:.1f} (Oversold). Market is at the floor!")
                     self._last_filter_results.append({"name": "Border Filter", "passed": False, "detail": f"RSI {current_rsi:.1f} < 30"})
-                    return  # Stops execution
+                    #return  # Stops execution
 
         self.smart_risk.check_new_day()
         risk_rec = self.smart_risk.get_trading_recommendation()
@@ -1831,18 +1873,18 @@ class TradingBot:
             # INVERTED/MOMENTUM LOGIC: Buy Green (Breakouts), Sell Red (Breakdowns)
             if target_direction == "BUY" and current_price < current_open:
                 logger.info(f"🚫 Candle Behavior (Inverted): BUY blocked - Candle is RED (Wait for green momentum). Open: {current_open:.2f}, Price: {current_price:.2f}")
-                return
+                #return
             elif target_direction == "SELL" and current_price > current_open:
                 logger.info(f"🚫 Candle Behavior (Inverted): SELL blocked - Candle is GREEN (Wait for red momentum). Open: {current_open:.2f}, Price: {current_price:.2f}")
-                return
+                #return
         else:
             # STANDARD MEAN-REVERSION: Buy Red (Dips), Sell Green (Peaks)
             if target_direction == "BUY" and current_price > current_open:
                 logger.info(f"🚫 Candle Behavior: BUY blocked - Candle is currently GREEN (Wait for a dip/red candle). Open: {current_open:.2f}, Price: {current_price:.2f}")
-                return
+                #return
             elif target_direction == "SELL" and current_price < current_open:
                 logger.info(f"🚫 Candle Behavior: SELL blocked - Candle is currently RED (Wait for a rally/green candle). Open: {current_open:.2f}, Price: {current_price:.2f}")
-                return
+                #return
 
         session_mult = getattr(self, '_current_session_multiplier', 1.0)
         if session_mult < 1.0:
@@ -2406,16 +2448,16 @@ class TradingBot:
             # 1. Re-check Candle Behavior (Don't buy if the candle became a massive green spike while sleeping)
             if new_final_signal.signal_type == "BUY" and current_price_check > current_open:
                 logger.warning(f"❌ 1s Verification Failed! Candle surged GREEN during wait. Avoiding FOMO peak.")
-                return
+                #return
             elif new_final_signal.signal_type == "SELL" and current_price_check < current_open:
                 logger.warning(f"❌ 1s Verification Failed! Candle dumped RED during wait. Avoiding FOMO bottom.")
-                return
+                #return
                 
             # 2. Re-check Pullback Filter (Ensure it hasn't turned into a falling knife)
             can_trade_pb, pb_reason = self._check_pullback_filter(df_check, new_final_signal.signal_type, current_price_check)
             if not can_trade_pb:
                 logger.warning(f"❌ 1s Verification Failed! Market overextended during wait: {pb_reason}")
-                return
+                #return
             # --------------------------------------------------------
 
             # If everything is still aligned and safe, execute!

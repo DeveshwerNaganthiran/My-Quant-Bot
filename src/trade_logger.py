@@ -300,6 +300,20 @@ class TradeLogger:
         """Record trade open - stores to DB and pending dict."""
         now = datetime.now(WIB)
 
+        # --- THE BULLETPROOF FIX: READ FEATURES FROM HARD DRIVE ---
+        try:
+            import os
+            import json
+            if os.path.exists("temp_rl_features.json"):
+                with open("temp_rl_features.json", "r") as f:
+                    disk_features = json.load(f)
+                features = disk_features
+                # Shred the document so it is never accidentally reused!
+                os.remove("temp_rl_features.json") 
+        except Exception as e:
+            pass
+        # ----------------------------------------------------------
+
         # Store in pending for close tracking
         trade_data = {
             "ticket": ticket,
@@ -485,6 +499,43 @@ class TradeLogger:
         self._trades_logged += 1
 
         logger.info(f"TradeLogger: Saved trade #{ticket} | {record.direction} | P/L: ${profit_usd:.2f} | Reason: {exit_reason}")
+
+        # --- NEW RL MEMORY AUTOSAVE ---
+        try:
+            import pandas as pd
+            import os
+            
+            memory_file = "src/backtests/rl_training_memory.csv"
+            os.makedirs(os.path.dirname(memory_file), exist_ok=True)
+            
+            smc = str(pending.get('smc_signal', '')).upper()
+            direction = str(pending.get('direction', '')).upper()
+            action = "STANDARD" if smc == direction else "INVERSE"
+            win = 1 if profit_usd > 0 else 0
+            
+            features = pending.get('features_entry', {})
+            
+            # Only save if we actually have features recorded
+            if isinstance(features, dict) and len(features) > 0:
+                row_data = {"timestamp": datetime.now().isoformat()}
+                row_data.update(features)
+                row_data.update({
+                    "action_taken": action,
+                    "was_random": 1, 
+                    "pnl": profit_usd,
+                    "win": win
+                })
+                
+                df_new = pd.DataFrame([row_data])
+                if not os.path.exists(memory_file):
+                    df_new.to_csv(memory_file, index=False)
+                else:
+                    df_new.to_csv(memory_file, mode='a', header=False, index=False)
+                    
+                logger.info(f"TradeLogger: 🧠 Successfully saved RL memory for ticket #{ticket}")
+        except Exception as e:
+            logger.error(f"TradeLogger: Failed to auto-save RL memory: {e}")
+        # ------------------------------
 
     def _write_trade_record(self, record: TradeRecord):
         """Write trade record to CSV file."""
@@ -698,6 +749,49 @@ class TradeLogger:
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
                 writer.writerow(record_dict)
             self._csv_writes += 1
+
+    # ==================== RL MEMORY LOGGING ====================
+
+    def log_rl_experience(self, timestamp, features, action, was_random, pnl, win):
+        """Log reinforcement learning experiences for the Meta-Supervisor."""
+        import pandas as pd
+        import os
+        
+        # Use the exact path your training script is looking for!
+        memory_file = "src/backtests/rl_training_memory.csv"
+        
+        with self._lock:
+            try:
+                # Ensure the directory exists
+                os.makedirs(os.path.dirname(memory_file), exist_ok=True)
+                
+                # Combine all data into a single flat dictionary
+                row_data = {"timestamp": timestamp}
+                
+                # Add all the market features (flatten them into columns)
+                if isinstance(features, dict):
+                    row_data.update(features)
+                    
+                # Add the RL results
+                row_data.update({
+                    "action_taken": action,
+                    "was_random": int(was_random),
+                    "pnl": float(pnl),
+                    "win": int(win)
+                })
+                
+                # Convert to DataFrame
+                df_new = pd.DataFrame([row_data])
+                
+                # Append to CSV (create header if it doesn't exist, append if it does)
+                if not os.path.exists(memory_file):
+                    df_new.to_csv(memory_file, index=False)
+                else:
+                    df_new.to_csv(memory_file, mode='a', header=False, index=False)
+                    
+                logger.debug(f"TradeLogger: Appended RL experience to {memory_file}")
+            except Exception as e:
+                logger.error(f"TradeLogger: Failed to save RL memory! Error: {e}")
 
     # ==================== ANALYSIS HELPERS ====================
 
