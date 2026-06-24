@@ -591,28 +591,28 @@ class SmartPositionManager:
                     lock_in_pct = 0.35  # Lock 15% of TP, give 25% breathing room
                     tier_name = "40%"
                 elif progress_pct >= 0.35:
-                    lock_in_pct = 0.25  # Pure Breakeven + spread fees (2% of TP)
+                    lock_in_pct = 0.30  # Pure Breakeven + spread fees (2% of TP)
                     tier_name = "35%"
                 elif progress_pct >= 0.30:
-                    lock_in_pct = 0.20  # Pure Breakeven + spread fees (2% of TP)
+                    lock_in_pct = 0.24  # Pure Breakeven + spread fees (2% of TP)
                     tier_name = "30%"
                 elif progress_pct >= 0.25:
-                    lock_in_pct = 0.15  # Pure Breakeven + spread fees (2% of TP)
+                    lock_in_pct = 0.21  # Pure Breakeven + spread fees (2% of TP)
                     tier_name = "25%"
                 elif progress_pct >= 0.20:
-                    lock_in_pct = 0.10  # Pure Breakeven + spread fees (2% of TP)
+                    lock_in_pct = 0.15  # Pure Breakeven + spread fees (2% of TP)
                     tier_name = "20%"
                 elif progress_pct >= 0.15:
-                    lock_in_pct = 0.05  # Pure Breakeven + spread fees (2% of TP)
+                    lock_in_pct = 0.12  # Pure Breakeven + spread fees (2% of TP)
                     tier_name = "15%"
                 elif progress_pct >= 0.10:
-                    lock_in_pct = 0.04  # Pure Breakeven + spread fees (2% of TP)
+                    lock_in_pct = 0.06  # Pure Breakeven + spread fees (2% of TP)
                     tier_name = "10%"
                 elif progress_pct >= 0.5:
-                    lock_in_pct = 0.01  # Pure Breakeven + spread fees (2% of TP)
+                    lock_in_pct = 0.02  # Pure Breakeven + spread fees (2% of TP)
                     tier_name = "5%"
                 elif progress_pct >= 0.1:
-                    lock_in_pct = 0.005  # Pure Breakeven + spread fees (2% of TP)
+                    lock_in_pct = 0.06  # Pure Breakeven + spread fees (2% of TP)
                     tier_name = "1%"
 
                 if lock_in_pct > 0.0:

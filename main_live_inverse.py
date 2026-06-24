@@ -1425,7 +1425,9 @@ class TradingBot:
 
     def _build_wide_mtf_features(self) -> Optional[pl.DataFrame]:
         import pandas as pd
-        timeframes = ["M1", "M5", "M15", "M30", "H1"]
+        
+        # 1. REDUCED TIMEFRAMES: Only M5 and M15
+        timeframes = ["M5", "M15"]
         live_state = {}
         
         for tf in timeframes:
@@ -1441,17 +1443,19 @@ class TradingBot:
             df_tf = self.smc.calculate_all(df_tf)
             
             live_row = df_tf.tail(1).to_pandas()
+            # Prefix columns with the timeframe (e.g., M5_rsi, M15_rsi)
             live_row.columns = [f"{tf}_{col}" if col != "time" else col for col in live_row.columns]
             live_state[tf] = live_row
             
-        if "M1" in live_state and "M5" in live_state:
-            merged = live_state["M1"]
-            for tf in ["M5", "M15", "M30", "H1"]:
-                if tf in live_state:
-                    merged = pd.concat([
-                        merged.reset_index(drop=True), 
-                        live_state[tf].drop(columns=['time'], errors='ignore').reset_index(drop=True)
-                    ], axis=1)
+        # 2. MERGE LOGIC: Start with M5, then append M15
+        if "M5" in live_state and "M15" in live_state:
+            merged = live_state["M5"]
+            
+            # Concat M15 next to M5
+            merged = pd.concat([
+                merged.reset_index(drop=True), 
+                live_state["M15"].drop(columns=['time'], errors='ignore').reset_index(drop=True)
+            ], axis=1)
             
             return pl.from_pandas(merged)
             
@@ -3099,7 +3103,8 @@ class TradingBot:
 
 
     async def _check_mtf_confluence(self, signal_direction: str) -> tuple[bool, str]:
-        timeframes = ["M5", "M15", "M30"]
+        # REDUCED: Only check M5 and M15
+        timeframes = ["M5", "M15"] 
         aligned_tfs = []
         
         for tf in timeframes:
@@ -3125,7 +3130,7 @@ class TradingBot:
                 
         is_aligned = len(aligned_tfs) >= 1
         
-        reason = f"Aligned on {', '.join(aligned_tfs)}" if is_aligned else f"Not aligned on any timeframe (need at least 1/3)"
+        reason = f"Aligned on {', '.join(aligned_tfs)}" if is_aligned else f"Not aligned on any timeframe (need at least 1/2)"
         return is_aligned, reason
     
 async def main():

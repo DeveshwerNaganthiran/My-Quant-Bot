@@ -30,8 +30,9 @@ BEST_MODEL_PATH = "models/xgboost_model.pkl"  # <-- OVERWRITES LIVE MODEL DIRECT
 TEMP_MODEL_PATH = "models/xgboost_model_temp.pkl"
 
 def get_multi_tf_live_state(connector, config, fe, smc):
-    """Fetches the LIVE, unclosed candle state across all required timeframes."""
-    timeframes = ["M1", "M5", "M15", "M30", "H1"]
+    """Fetches the LIVE, unclosed candle state across M5 and M15 timeframes."""
+    # 1. REDUCED: Only fetch M5 and M15
+    timeframes = ["M5", "M15"]
     live_state = {}
     
     for tf in timeframes:
@@ -46,15 +47,18 @@ def get_multi_tf_live_state(connector, config, fe, smc):
         live_row.columns = [f"{tf}_{col}" if col != "time" else col for col in live_row.columns]
         live_state[tf] = live_row
 
-    if "M1" in live_state and "M5" in live_state:
-        merged = live_state["M1"]
-        for tf in ["M5", "M15", "M30", "H1"]:
-            if tf in live_state:
-                merged = pd.concat([merged.reset_index(drop=True), live_state[tf].drop(columns=['time']).reset_index(drop=True)], axis=1)
+    # 2. MERGE LOGIC: Start with M5, attach M15
+    if "M5" in live_state and "M15" in live_state:
+        merged = live_state["M5"]
+        if "M15" in live_state:
+            merged = pd.concat([
+                merged.reset_index(drop=True), 
+                live_state["M15"].drop(columns=['time'], errors='ignore').reset_index(drop=True)
+            ], axis=1)
         
         merged['exact_live_time'] = datetime.now()
         tick = connector.get_tick(config.symbol)
-        merged['current_ask'] = tick.ask if tick else merged['M1_close'].values[0]
+        merged['current_ask'] = tick.ask if tick else merged['M5_close'].values[0]
         
         return merged
     return None
@@ -227,8 +231,15 @@ def hourly_retrain():
 
         logger.info("Running Pass 2: Final Training on pruned features...")
         final_params = prune_model.xgb_params.copy()
-        final_params["colsample_bytree"] = 0.9  
-        final_params["learning_rate"] = 0.02
+        
+        # --- Add Anti-Overfitting Regularization ---
+        final_params["max_depth"] = 2               # Force very simple trees (was likely 3)
+        final_params["colsample_bytree"] = 0.5      # Only use 50% of features per tree
+        final_params["subsample"] = 0.6             # Only use 60% of data per tree
+        final_params["learning_rate"] = 0.01        # Learn much slower (was 0.02)
+        final_params["reg_alpha"] = 5.0             # L1 Regularization (penalize extra features)
+        final_params["reg_lambda"] = 10.0           # L2 Regularization (penalize extreme weights)
+        final_params["min_child_weight"] = 20       # Demand more evidence before making a split
         
         # WE SAVE TO A TEMP FILE FIRST
         model = TradingModelV2(

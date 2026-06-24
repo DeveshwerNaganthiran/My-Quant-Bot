@@ -21,10 +21,15 @@ class AIBrain:
         self.standard_bot = StandardBot(config=get_std_config(), simulation=False)
         self.inverse_bot = InverseBot(config=get_inv_config(), simulation=False)
         
+        # 👇 ADD THESE TWO LINES HERE 👇
+        self.standard_bot._load_models()
+        self.inverse_bot._load_models()
+        # 👆 ----------------------- 👆
+        
         self.POLLING_RATE = 60      
         
         # --- THE WATCHTOWER MEMORY ---
-        self.active_rl_trades = {} 
+        self.active_rl_trades = {}
         self.memory_file = "src/backtests/rl_training_memory.csv"
         os.makedirs(os.path.dirname(self.memory_file), exist_ok=True)
         
