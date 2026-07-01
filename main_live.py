@@ -2084,41 +2084,52 @@ class TradingBot:
                 return None
 
             prob = ml_prediction.probability
+            ai_conf = ml_prediction.confidence
+            ai_signal = ml_prediction.signal
             
-            # Widen the neutral band so AI doesn't block trades unless it is highly confident
-            ml_is_strongly_bullish = prob >= 0.65
-            ml_is_strongly_bearish = prob <= 0.35
-            ml_is_neutral = 0.35 <= prob < 0.65
-
-            if ml_is_neutral:
-                if smc_conf >= 0.60:
-                    combined_confidence = smc_conf * 0.90 
-                    reason_suffix = f" | AI NEUTRAL ({prob:.1%}) -> Trusting SMC"
-                    logger.info(f"⚖️ AI Neutral ({prob:.1%}). Trusting SMC {smc_signal.signal_type} ({smc_conf:.0%}).")
+            # --- NEW LOGIC: AI IS THE MASTER DECISION MAKER ---
+            # If AI confidence >= 0.55, we TRUST AI entirely.
+            if ai_conf >= 0.55:
+                if smc_signal.signal_type == ai_signal:
+                    combined_confidence = max(smc_conf, ai_conf)
+                    reason_suffix = f" | AI & SMC AGREE ({ai_conf:.0%})"
+                    logger.info(f"✅ CONFLUENCE: Both agree on {ai_signal} (SMC {smc_conf:.0%}, AI {ai_conf:.0%})")
                 else:
-                    logger.warning(f"🚫 BLOCKED: AI is Neutral ({prob:.1%}) and SMC is weak ({smc_conf:.0%}).")
-                    return None
-            else:
-                ml_agrees = (
-                    (smc_signal.signal_type == "BUY" and ml_is_strongly_bullish) or
-                    (smc_signal.signal_type == "SELL" and ml_is_strongly_bearish)
-                )
-
-                if ml_agrees:
-                    combined_confidence = smc_conf
-                    reason_suffix = f" | AI STRONG AGREE ({prob:.1%})"
-                    logger.info(f"✅ CONFLUENCE: SMC {smc_signal.signal_type} + AI Strongly Agrees ({prob:.1%})")
-                else:
-                    # THE TIE-BREAKER: If AI disagrees, but SMC is extremely confident (>= 80%)
-                    if smc_conf >= 0.80:
-                        combined_confidence = smc_conf * 0.80 # Penalize confidence by 20% to reduce lot size
-                        reason_suffix = f" | SMC OVERRIDE (AI Disagreed at {prob:.1%})"
-                        logger.warning(f"⚠️ TIE-BREAKER: AI disagrees ({prob:.1%}) but SMC is VERY STRONG ({smc_conf:.0%}). Trusting SMC!")
+                    # AI completely overrides SMC
+                    combined_confidence = ai_conf
+                    reason_suffix = f" | AI OVERRIDE (AI {ai_conf:.0%} overruled SMC {smc_signal.signal_type})"
+                    logger.warning(f"⚠️ AI OVERRIDE: SMC says {smc_signal.signal_type} but AI says {ai_signal} ({ai_conf:.0%}). Trusting AI!")
+                    
+                    # Recalculate SL/TP for the AI's new direction based on current ATR
+                    atr = 15.0 
+                    if cached_df is not None and "atr" in cached_df.columns:
+                        val = cached_df["atr"].drop_nulls().tail(1).item()
+                        if val and val > 0:
+                            atr = val
+                            
+                    entry_price = smc_signal.entry_price
+                    sl_dist = atr * 2.0
+                    tp_dist = atr * 3.0
+                    
+                    if ai_signal == "BUY":
+                        sl, tp = entry_price - sl_dist, entry_price + tp_dist
                     else:
-                        logger.warning(f"🚫 BLOCKED: SMC says {smc_signal.signal_type} and AI disagrees ({prob:.1%}).")
-                        return None
-
-            combined_confidence *= london_penalty
+                        sl, tp = entry_price + sl_dist, entry_price - tp_dist
+                        
+                    # Rewrite the signal to follow the AI
+                    smc_signal = SMCSignal(
+                        signal_type=ai_signal,
+                        entry_price=entry_price,
+                        stop_loss=sl,
+                        take_profit=tp,
+                        confidence=combined_confidence,
+                        reason=smc_signal.reason
+                    )
+            else:
+                # If AI confidence is < 0.55, the AI is confused. Fall back and trust SMC.
+                combined_confidence = smc_conf
+                reason_suffix = f" | AI LOW CONF ({ai_conf:.0%}) -> Trusting SMC"
+                logger.info(f"⚖️ AI Neutral/Low ({ai_conf:.0%}). Trusting SMC {smc_signal.signal_type} ({smc_conf:.0%}).")
             if regime_state and regime_state.regime == MarketRegime.HIGH_VOLATILITY:
                 combined_confidence *= 0.9
 

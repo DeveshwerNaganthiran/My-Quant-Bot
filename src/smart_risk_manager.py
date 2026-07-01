@@ -1567,7 +1567,7 @@ class SmartRiskManager:
             # Key insight: recovery = pred_1m - current_profit
             # Example: current=-$5.81, pred=-$1.27 → recovery=+$4.54 (GOOD!)
             strong_recovery_signal = False
-            if self.trajectory_predictor and predictions:
+            if self.trajectory_predictor and 'predictions' in locals() and predictions:
                 pred_1m = predictions.get('pred_1m', current_profit)
                 pred_conf = predictions.get('pred_1m_conf', 0)
 
