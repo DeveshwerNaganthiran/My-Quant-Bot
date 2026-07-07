@@ -2085,47 +2085,21 @@ class TradingBot:
                 return None
 
             prob = ml_prediction.probability
-            ai_conf = ml_prediction.confidence
+            # FIX: Ensure ai_conf correctly captures the strength of the ML signal
+            ai_conf = ml_prediction.confidence if ml_prediction.confidence >= 0.5 else max(prob, 1.0 - prob)
             ai_signal = ml_prediction.signal
             
-            # --- NEW LOGIC: AI IS THE MASTER DECISION MAKER ---
-            # If AI confidence >= 0.55, we TRUST AI entirely.
-            if ai_conf >= 0.55:
-                if smc_signal.signal_type == ai_signal:
-                    combined_confidence = max(smc_conf, ai_conf)
-                    reason_suffix = f" | AI & SMC AGREE ({ai_conf:.0%})"
-                    logger.info(f"✅ CONFLUENCE: Both agree on {ai_signal} (SMC {smc_conf:.0%}, AI {ai_conf:.0%})")
-                else:
-                    # AI completely overrides SMC
-                    combined_confidence = ai_conf
-                    reason_suffix = f" | AI OVERRIDE (AI {ai_conf:.0%} overruled SMC {smc_signal.signal_type})"
-                    logger.warning(f"⚠️ AI OVERRIDE: SMC says {smc_signal.signal_type} but AI says {ai_signal} ({ai_conf:.0%}). Trusting AI!")
-                    
-                    # Recalculate SL/TP for the AI's new direction based on current ATR
-                    atr = 15.0 
-                    if cached_df is not None and "atr" in cached_df.columns:
-                        val = cached_df["atr"].drop_nulls().tail(1).item()
-                        if val and val > 0:
-                            atr = val
-                            
-                    entry_price = smc_signal.entry_price
-                    sl_dist = atr * 2.0
-                    tp_dist = atr * 3.0
-                    
-                    if ai_signal == "BUY":
-                        sl, tp = entry_price - sl_dist, entry_price + tp_dist
-                    else:
-                        sl, tp = entry_price + sl_dist, entry_price - tp_dist
-                        
-                    # Rewrite the signal to follow the AI
-                    smc_signal = SMCSignal(
-                        signal_type=ai_signal,
-                        entry_price=entry_price,
-                        stop_loss=sl,
-                        take_profit=tp,
-                        confidence=combined_confidence,
-                        reason=smc_signal.reason
-                    )
+            # --- STRICT ALIGNMENT BLOCK: AI IS THE MASTER ---
+            # If the AI strongly disagrees with the SMC micro-trend, block the trap trade entirely.
+            if ai_conf >= 0.55 and ai_signal != smc_signal.signal_type:
+                logger.warning(f"🚫 AI VETO: SMC wants to {smc_signal.signal_type}, but AI macro-trend is {ai_signal} ({ai_conf:.0%}). Trade cancelled to prevent trap.")
+                return None
+                
+            # --- CONFLUENCE LOGIC ---
+            if ai_conf >= 0.55 and smc_signal.signal_type == ai_signal:
+                combined_confidence = max(smc_conf, ai_conf)
+                reason_suffix = f" | AI & SMC AGREE ({ai_conf:.0%})"
+                logger.info(f"✅ CONFLUENCE: Both agree on {ai_signal} (SMC {smc_conf:.0%}, AI {ai_conf:.0%})")
             else:
                 # If AI confidence is < 0.55, the AI is confused. Fall back and trust SMC.
                 combined_confidence = smc_conf
@@ -2463,28 +2437,44 @@ class TradingBot:
             
             # 1. Re-check Candle Behavior (Don't buy if the candle became a massive green spike while sleeping)
             if new_final_signal.signal_type == "BUY" and current_price_check > current_open:
-                logger.warning(f"❌ 1s Verification Failed! Candle surged GREEN during wait. Avoiding FOMO peak.")
-                #return
+                logger.warning(f"❌ 1s Verification Failed! Candle surged GREEN during wait. Avoiding FOMO peak. Cancelling trade.")
+                return
             elif new_final_signal.signal_type == "SELL" and current_price_check < current_open:
-                logger.warning(f"❌ 1s Verification Failed! Candle dumped RED during wait. Avoiding FOMO bottom.")
-                #return
+                logger.warning(f"❌ 1s Verification Failed! Candle dumped RED during wait. Avoiding FOMO bottom. Cancelling trade.")
+                return
                 
             # 2. Re-check Pullback Filter (Ensure it hasn't turned into a falling knife)
             can_trade_pb, pb_reason = self._check_pullback_filter(df_check, new_final_signal.signal_type, current_price_check)
             if not can_trade_pb:
-                logger.warning(f"❌ 1s Verification Failed! Market overextended during wait: {pb_reason}")
-                #return
+                logger.warning(f"❌ 1s Verification Failed! Market overextended during wait: {pb_reason}. Cancelling trade.")
+                return
             # --------------------------------------------------------
 
             # If everything is still aligned and safe, execute!
-            logger.info(f"✅ 1s Verification Passed! Trend is still {original_signal.signal_type} and entry is safe. Executing trade...")
+            logger.info(f"✅ 1s Verification Passed! Trend is still {original_signal.signal_type}. Preparing burst execution...")
             
             # Update entry price to the exact newest tick
             tick = self.mt5.get_tick(self.config.symbol)
             if tick:
                 original_signal.entry_price = tick.ask if original_signal.signal_type == "BUY" else tick.bid
 
-            await self._execute_trade_safe(original_signal, position_result, original_regime_state)
+            # Check exactly how many slots we have left to reach the max limit
+            open_positions = self.mt5.get_open_positions(self.config.symbol, self.config.magic_number)
+            current_type = 0 if original_signal.signal_type == "BUY" else 1
+            same_dir_count = 0
+            if open_positions is not None and not open_positions.is_empty():
+                same_dir_count = sum(1 for p in open_positions.iter_rows(named=True) if p.get("type", -1) == current_type)
+            
+            trades_to_fire = self.smart_risk.max_concurrent_positions - same_dir_count
+            
+            # Fire all remaining trades instantly in a quick loop
+            if trades_to_fire > 0:
+                logger.info(f"🚀 BURST MODE: Firing {trades_to_fire} trades of {position_result.lot_size} instantly!")
+                for _ in range(trades_to_fire):
+                    await self._execute_trade_safe(original_signal, position_result, original_regime_state)
+                    await asyncio.sleep(0.1) # 100ms delay to prevent MT5 "Too Many Requests" broker block
+            else:
+                logger.info("Stacking Limit Reached: No burst trades fired.")
             
         except Exception as e:
             logger.error(f"Error during 1s verification: {e}")
