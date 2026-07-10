@@ -79,8 +79,45 @@ def prepare_features(df: pl.DataFrame) -> pl.DataFrame:
     smc = SMCAnalyzer(swing_length=5)
     df = smc.calculate_all(df)
     
-    # Create target variable
-    df = fe.create_target(df, lookahead=1)
+    # ========================================================
+    # FIX: TRUE PATH-DEPENDENT TARGET 
+    # Look at the Highest High and Lowest Low over the next hour.
+    # ========================================================
+    lookahead = 15 # 15 bars = 1 hour and 15 mins on M5
+    
+    # 1. Find the highest peak and lowest drop over the next 15 bars
+    # We calculate a 15-bar rolling max backwards, then shift it forwards to align with "today"
+    df = df.with_columns([
+        pl.col("high").rolling_max(lookahead).shift(-lookahead).alias("future_high"),
+        pl.col("low").rolling_min(lookahead).shift(-lookahead).alias("future_low")
+    ])
+    
+    # 2. Calculate the maximum potential profit and maximum drawdown
+    df = df.with_columns([
+        (pl.col("future_high") - pl.col("close")).alias("max_up"),
+        (pl.col("close") - pl.col("future_low")).alias("max_down")
+    ])
+    
+    # 3. Apply the strict reward/risk ratio
+    # Must hit $3.00 in profit before hitting $1.50 in drawdown to be a "clean" trade
+    min_reward = 3.0
+    max_risk = 1.5
+    
+    df = df.with_columns([
+        pl.when((pl.col("max_up") >= min_reward) & (pl.col("max_down") < max_risk)).then(1)
+        .when((pl.col("max_down") >= min_reward) & (pl.col("max_up") < max_risk)).then(0)
+        .otherwise(-1).alias("strict_target")
+    ])
+    
+    # 4. DELETE THE CHOPPY/DIRTY TRADES
+    original_len = len(df)
+    df = df.filter(pl.col("strict_target") != -1)
+    logger.info(f"🔪 Path-Dependent Filter removed {original_len - len(df)} dirty/sideways bars.")
+    
+    # Replace target
+    if "target" in df.columns:
+        df = df.drop("target")
+    df = df.rename({"strict_target": "target"})
     
     logger.info(f"Total features created: {len(df.columns)}")
     
@@ -134,6 +171,21 @@ def train_xgboost_model(
     logger.info("Training XGBoost Model (Anti-Overfit Config)")
     logger.info("=" * 60)
 
+    # ========================================================
+    # DIAGNOSTIC CHECK: Ensure dataset wasn't destroyed by NaNs
+    # ========================================================
+    try:
+        if "target" in df.columns:
+            buy_count = df.filter(pl.col("target") == 1).height
+            sell_count = df.filter(pl.col("target") == 0).height
+            logger.info(f"DEBUG: Dataset ready for XGBoost. Total rows: {len(df)}")
+            logger.info(f"DEBUG: Target balance -> BUYs: {buy_count} | SELLs: {sell_count}")
+            if len(df) == 0 or (buy_count == 0 and sell_count == 0):
+                logger.error("⚠️ CRITICAL: Dataset is empty or targets are missing!")
+    except Exception as e:
+        logger.warning(f"Could not print target diagnostics: {e}")
+    # ========================================================
+
     # Get feature columns that exist in df
     default_features = get_default_feature_columns()
     available_features = [f for f in default_features if f in df.columns]
@@ -151,9 +203,9 @@ def train_xgboost_model(
         df,
         available_features,
         target_col="target",
-        train_ratio=0.75,          # 75% train, 25% test
-        num_boost_round=150,       
-        early_stopping_rounds=10,  # CRITICAL: Stop training if Test AUC doesn't improve for 10 rounds
+        train_ratio=0.85,          # 75% train, 25% test
+        num_boost_round=500,       
+        early_stopping_rounds=50,  # CRITICAL: Stop training if Test AUC doesn't improve for 10 rounds
     )
     
     if model.fitted:
@@ -162,25 +214,6 @@ def train_xgboost_model(
         for feat, imp in model.get_feature_importance(10).items():
             logger.info(f"  {feat}: {imp:.4f}")
         
-        # # Walk-forward validation
-        # logger.info("Running walk-forward validation...")
-        # results = model.walk_forward_train(
-        #     df,
-        #     available_features,
-        #     "target",
-        #     train_window=500,
-        #     test_window=50,
-        #     step=50,
-        # )
-        
-        # if results:
-        #     avg_train = np.mean([r[0] for r in results])
-        #     avg_test = np.mean([r[1] for r in results])
-        #     logger.info(f"Walk-forward Results:")
-        #     logger.info(f"  Avg Train AUC: {avg_train:.4f}")
-        #     logger.info(f"  Avg Test AUC: {avg_test:.4f}")
-        #     logger.info(f"  Overfitting ratio: {avg_train/avg_test:.2f}")
-    
     return model
 
 
@@ -231,14 +264,9 @@ def main():
     
     try:
         # Fetch data - 1 YEAR OF DATA
-        # M1 timeframe: 1 year is approx 370,000 bars
-        # M5 timeframe: 1 year is approx 75,000 bars
-        # H1 timeframe: 1 year is approx 6,200 bars
-        
-        # Let's train on M5 as the primary anchor to avoid M1 noise, 
-        # but you can change this back to config.execution_timeframe if preferred.
+        # Let's train on M5 as the primary anchor to avoid M1 noise
         training_timeframe = "M5" 
-        historical_bars = 100000  # Pull 100k bars to get immense historical context
+        historical_bars = 25000  # Pull 100k bars to get immense historical context
         
         logger.info(f"Initiating MASSIVE data fetch: {historical_bars} bars on {training_timeframe}")
         
@@ -249,13 +277,13 @@ def main():
             bars=historical_bars, 
         )
         
-        # Prepare features (now includes W, M, and Sideways)
+        # Prepare features (now includes Path-Dependent logic)
         df = prepare_features(df)
         
         # Save raw data
         save_training_data(df)
         
-        # Train HMM (Increased lookback for massive data)
+        # Train HMM 
         hmm_model = train_hmm_model(df)
         
         if hmm_model.fitted:
@@ -285,3 +313,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+

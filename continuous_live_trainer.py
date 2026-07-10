@@ -210,8 +210,24 @@ def hourly_retrain():
         if fill_exprs:
             combined_df = combined_df.with_columns(fill_exprs)
 
-        logger.info("Running Pass 1: Feature Pruning...")
-        prune_model = TradingModelV2()
+        # ==============================================================
+        # NEW ANTI-OVERFITTING RULES FOR BOTH PASS 1 AND PASS 2
+        # ==============================================================
+        anti_overfit_params = {
+            "objective": "binary:logistic",
+            "eval_metric": "auc",
+            "max_depth": 2,               # Force very simple trees
+            "colsample_bytree": 0.5,      # Hide 50% of features to prevent reliance on just one
+            "subsample": 0.6,             # Hide 40% of rows to prevent exact path memorization
+            "learning_rate": 0.01,        # Learn extremely slowly
+            "reg_alpha": 5.0,             # L1 Penalty (Destroy useless features)
+            "reg_lambda": 10.0,           # L2 Penalty (Destroy extreme weights)
+            "min_child_weight": 300,      # CRITICAL: Force it to find patterns spanning ~25 mins of data
+            "gamma": 2.0                  # Demand significant loss reduction before splitting
+        }
+
+        logger.info("Running Pass 1: Feature Pruning (With Regularization)...")
+        prune_model = TradingModelV2(xgb_params=anti_overfit_params.copy())
         
         prune_model.fit(
             combined_df, 
@@ -230,22 +246,12 @@ def hourly_retrain():
                 logger.info(f"🔪 Pruned massive dataset down to the Top {len(feature_cols)} most important features.")
 
         logger.info("Running Pass 2: Final Training on pruned features...")
-        final_params = prune_model.xgb_params.copy()
-        
-        # --- Add Anti-Overfitting Regularization ---
-        final_params["max_depth"] = 2               # Force very simple trees (was likely 3)
-        final_params["colsample_bytree"] = 0.5      # Only use 50% of features per tree
-        final_params["subsample"] = 0.6             # Only use 60% of data per tree
-        final_params["learning_rate"] = 0.01        # Learn much slower (was 0.02)
-        final_params["reg_alpha"] = 5.0             # L1 Regularization (penalize extra features)
-        final_params["reg_lambda"] = 10.0           # L2 Regularization (penalize extreme weights)
-        final_params["min_child_weight"] = 20       # Demand more evidence before making a split
         
         # WE SAVE TO A TEMP FILE FIRST
         model = TradingModelV2(
             confidence_threshold=0.60, 
             model_path=TEMP_MODEL_PATH, 
-            xgb_params=final_params 
+            xgb_params=anti_overfit_params.copy()
         )
         
         model.fit(

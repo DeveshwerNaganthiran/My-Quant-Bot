@@ -2009,7 +2009,7 @@ class TradingBot:
         from src.regime_detector import MarketRegime
         
         current_hour = datetime.now(ZoneInfo("Asia/Kuala_Lumpur")).hour
-        is_golden_time = 19 <= current_hour <= 23 
+        is_golden_time = 19 <= current_hour <= 23
 
         if market_analysis.quality.value == "avoid":
             if self._loop_count % 120 == 0:
@@ -2046,7 +2046,7 @@ class TradingBot:
         if ml_prediction.signal in ["BUY", "SELL"] and ml_prediction.confidence >= 0.85 and needs_override:
             direction = ml_prediction.signal
             
-            atr = 15.0 
+            atr = 15.0
             if cached_df is not None and "atr" in cached_df.columns:
                 val = cached_df["atr"].drop_nulls().tail(1).item()
                 if val and val > 0:
@@ -2055,8 +2055,8 @@ class TradingBot:
             if tick:
                 entry_price = tick.ask if direction == "BUY" else tick.bid
                 
-                sl_dist = atr * 2.0 
-                tp_dist = atr * 3.0 
+                sl_dist = atr * 2.0
+                tp_dist = atr * 3.0
                 
                 if direction == "BUY":
                     sl, tp = entry_price - sl_dist, entry_price + tp_dist
@@ -2084,12 +2084,10 @@ class TradingBot:
                 return None
 
             prob = ml_prediction.probability
-            # FIX: Ensure ai_conf correctly captures the strength of the ML signal
             ai_conf = ml_prediction.confidence if ml_prediction.confidence >= 0.5 else max(prob, 1.0 - prob)
             ai_signal = ml_prediction.signal
             
             # --- STRICT ALIGNMENT BLOCK: AI IS THE MASTER ---
-            # If the AI strongly disagrees with the SMC micro-trend, block the trap trade entirely.
             if ai_conf >= 0.55 and ai_signal != smc_signal.signal_type:
                 logger.warning(f"🚫 AI VETO: SMC wants to {smc_signal.signal_type}, but AI macro-trend is {ai_signal} ({ai_conf:.0%}). Trade cancelled to prevent trap.")
                 return None
@@ -2100,15 +2098,14 @@ class TradingBot:
                 reason_suffix = f" | AI & SMC AGREE ({ai_conf:.0%})"
                 logger.info(f"✅ CONFLUENCE: Both agree on {ai_signal} (SMC {smc_conf:.0%}, AI {ai_conf:.0%})")
             else:
-                # If AI confidence is < 0.55, the AI is confused. Fall back and trust SMC.
-                combined_confidence = smc_conf
-                reason_suffix = f" | AI LOW CONF ({ai_conf:.0%}) -> Trusting SMC"
-                logger.info(f"⚖️ AI Neutral/Low ({ai_conf:.0%}). Trusting SMC {smc_signal.signal_type} ({smc_conf:.0%}).")
-            if regime_state and regime_state.regime == MarketRegime.HIGH_VOLATILITY:
-                combined_confidence *= 0.9
+                # ==========================================================
+                # FIX: NO MORE FALLBACKS. IF AI IS NOT CONFIDENT, CANCEL!
+                # ==========================================================
+                logger.warning(f"🚫 AI VETO: AI confidence is too low ({ai_conf:.0%}). Skipping SMC {smc_signal.signal_type} trade to protect capital.")
+                return None
 
             logger.info(
-                f"{golden_marker}[SMC-ONLY] {smc_signal.signal_type} @ {smc_signal.entry_price:.2f} "
+                f"{golden_marker}[AI APPROVED] {smc_signal.signal_type} @ {smc_signal.entry_price:.2f} "  
                 f"(SMC={smc_conf:.0%}, ML={ml_prediction.signal} {ml_prediction.confidence:.0%}, "
                 f"Final={combined_confidence:.0%})"
             )
@@ -2119,10 +2116,11 @@ class TradingBot:
                 stop_loss=smc_signal.stop_loss,
                 take_profit=smc_signal.take_profit,
                 confidence=combined_confidence,
-                reason=f"SMC-ONLY: {smc_signal.reason}{reason_suffix}",
+                reason=f"AI VALIDATED: {smc_signal.reason}{reason_suffix}",
             )
 
         return None
+
 
     def _check_pullback_filter(
         self,
@@ -3203,3 +3201,5 @@ if __name__ == "__main__":
         asyncio.run(main())
     finally:
         _release_lock()
+
+

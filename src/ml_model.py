@@ -70,16 +70,16 @@ class TradingModel:
         self.params = params or {
             "objective": "binary:logistic",
             "eval_metric": "auc",
-            "max_depth": 3,            # FIXED: Keep trees shallow to prevent curve-fitting
-            "learning_rate": 0.05,     # FIXED: Increased slightly to balance shallower trees
+            "max_depth": 4,            # FIXED: Keep trees shallow to prevent curve-fitting
+            "learning_rate": 0.02,     # FIXED: Increased slightly to balance shallower trees
             "tree_method": "hist",
             "device": "cpu",
-            "min_child_weight": 50,    # FIXED: Require at least 50 samples to make a rule (Kills noise)
-            "subsample": 0.7,          
+            "min_child_weight": 15,    # FIXED: Require at least 50 samples to make a rule (Kills noise)
+            "subsample": 0.5,          
             "colsample_bytree": 0.5,   
-            "reg_alpha": 1.0,          # FIXED: Increased L1 penalty to drop useless features
-            "reg_lambda": 1.0,         # FIXED: Increased L2 penalty for smoother weights
-            "gamma": 1.0,              # FIXED: Require massive loss reduction to split
+            "reg_alpha": 2.0,          # FIXED: Increased L1 penalty to drop useless features
+            "reg_lambda": 2.0,         # FIXED: Increased L2 penalty for smoother weights
+            "gamma": 0.5,              # FIXED: Require massive loss reduction to split
             "scale_pos_weight": 1.0    
         }
         
