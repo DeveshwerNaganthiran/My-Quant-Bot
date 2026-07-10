@@ -605,15 +605,15 @@ class SmartPositionManager:
                 elif progress_pct >= 0.15:
                     lock_in_pct = 0.12  # Pure Breakeven + spread fees (2% of TP)
                     tier_name = "15%"
-                elif progress_pct >= 0.10:
-                    lock_in_pct = 0.06  # Pure Breakeven + spread fees (2% of TP)
-                    tier_name = "10%"
-                elif progress_pct >= 0.5:
-                    lock_in_pct = 0.02  # Pure Breakeven + spread fees (2% of TP)
-                    tier_name = "5%"
-                elif progress_pct >= 0.1:
-                    lock_in_pct = 0.06  # Pure Breakeven + spread fees (2% of TP)
-                    tier_name = "1%"
+                # elif progress_pct >= 0.10:
+                #     lock_in_pct = 0.06  # Pure Breakeven + spread fees (2% of TP)
+                #     tier_name = "10%"
+                # elif progress_pct >= 0.5:
+                #     lock_in_pct = 0.02  # Pure Breakeven + spread fees (2% of TP)
+                #     tier_name = "5%"
+                # elif progress_pct >= 0.1:
+                #     lock_in_pct = 0.06  # Pure Breakeven + spread fees (2% of TP)
+                #     tier_name = "1%"
 
                 if lock_in_pct > 0.0:
                     lock_distance = lock_in_pct * tp_distance_price

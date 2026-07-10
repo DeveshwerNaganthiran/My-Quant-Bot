@@ -70,16 +70,16 @@ class TradingModel:
         self.params = params or {
             "objective": "binary:logistic",
             "eval_metric": "auc",
-            "max_depth": 4,            # FIXED: Keep trees shallow to prevent curve-fitting
-            "learning_rate": 0.02,     # FIXED: Increased slightly to balance shallower trees
+            "max_depth": 2,            # FIXED: Keep trees shallow to prevent curve-fitting
+            "learning_rate": 0.01,     # FIXED: Increased slightly to balance shallower trees
             "tree_method": "hist",
             "device": "cpu",
-            "min_child_weight": 15,    # FIXED: Require at least 50 samples to make a rule (Kills noise)
+            "min_child_weight": 30,    # FIXED: Require at least 50 samples to make a rule (Kills noise)
             "subsample": 0.5,          
             "colsample_bytree": 0.5,   
-            "reg_alpha": 2.0,          # FIXED: Increased L1 penalty to drop useless features
-            "reg_lambda": 2.0,         # FIXED: Increased L2 penalty for smoother weights
-            "gamma": 0.5,              # FIXED: Require massive loss reduction to split
+            "reg_alpha": 5.0,          # FIXED: Increased L1 penalty to drop useless features
+            "reg_lambda": 5.0,         # FIXED: Increased L2 penalty for smoother weights
+            "gamma": 2.0,              # FIXED: Require massive loss reduction to split
             "scale_pos_weight": 1.0    
         }
         
@@ -95,8 +95,8 @@ class TradingModel:
         feature_cols: List[str],
         target_col: str = "target",
         train_ratio: float = 0.8,
-        num_boost_round: int = 100,
-        early_stopping_rounds: int = 10,
+        num_boost_round: int = 300,
+        early_stopping_rounds: int = 20,
     ) -> "TradingModel":
         """
         Train the XGBoost model on Polars DataFrame.

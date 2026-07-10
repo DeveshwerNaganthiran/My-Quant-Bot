@@ -26,7 +26,7 @@ class AIBrain:
         self.inverse_bot._load_models()
         # 👆 ----------------------- 👆
         
-        self.POLLING_RATE = 60      
+        self.POLLING_RATE = 5      
         
         # --- THE WATCHTOWER MEMORY ---
         self.active_rl_trades = {}

@@ -963,7 +963,7 @@ class TradingBot:
             df_h1 = self.mt5.get_market_data(
                 symbol=self.config.symbol,
                 timeframe="H1",
-                count=100,
+                count=1000,
             )
 
             if len(df_h1) < 30:
@@ -1263,7 +1263,7 @@ class TradingBot:
                         ml_prediction = self._invert_ml_prediction(raw_ml_prediction)
                         eval_df = mtf_df
                     else:
-                        df_fallback = self.mt5.get_market_data(self.config.symbol, self.config.execution_timeframe, count=50)
+                        df_fallback = self.mt5.get_market_data(self.config.symbol, self.config.execution_timeframe, count=1000)
                         if len(df_fallback) == 0: return
                         df_fallback = self.features.calculate_all(df_fallback, include_ml_features=True)
                         
@@ -1472,7 +1472,7 @@ class TradingBot:
         df = self.mt5.get_market_data(
             symbol=self.config.symbol,
             timeframe=self.config.execution_timeframe,
-            count=200,
+            count=1000,
         )
         
         if len(df) == 0:
@@ -2089,21 +2089,26 @@ class TradingBot:
             ai_signal = ml_prediction.signal
             
             # --- STRICT ALIGNMENT BLOCK: AI IS THE MASTER ---
-            if ai_conf >= 0.55 and ai_signal != smc_signal.signal_type:
+            if ai_conf >= 0.515 and ai_signal != smc_signal.signal_type:
                 logger.warning(f"🚫 AI VETO: SMC wants to {smc_signal.signal_type}, but AI macro-trend is {ai_signal} ({ai_conf:.0%}). Trade cancelled to prevent trap.")
                 return None
                 
             # --- CONFLUENCE LOGIC ---
-            if ai_conf >= 0.55 and smc_signal.signal_type == ai_signal:
+            if ai_conf >= 0.515 and smc_signal.signal_type == ai_signal:
                 combined_confidence = max(smc_conf, ai_conf)
                 reason_suffix = f" | AI & SMC AGREE ({ai_conf:.0%})"
                 logger.info(f"✅ CONFLUENCE: Both agree on {ai_signal} (SMC {smc_conf:.0%}, AI {ai_conf:.0%})")
             else:
                 # ==========================================================
-                # FIX: NO MORE FALLBACKS. IF AI IS NOT CONFIDENT, CANCEL!
+                # FALLBACK: IF AI IS UNSURE, TRUST STRONG SMC SETUPS
                 # ==========================================================
-                logger.warning(f"🚫 AI VETO: AI confidence is too low ({ai_conf:.0%}). Skipping SMC {smc_signal.signal_type} trade to protect capital.")
-                return None
+                if smc_conf >= 0.70:
+                    combined_confidence = smc_conf
+                    reason_suffix = f" | AI NEUTRAL ({ai_conf:.1%}) -> Trusting SMC"
+                    logger.info(f"⚠️ AI Neutral, but SMC confidence is strong ({smc_conf:.0%}). Executing to gather data.")
+                else:
+                    logger.warning(f"🚫 AI VETO: AI confidence is too low ({ai_conf:.0%}) and SMC is weak. Skipping.")
+                    return None
 
             logger.info(
                 f"{golden_marker}[AI APPROVED] {smc_signal.signal_type} @ {smc_signal.entry_price:.2f} "  
@@ -2372,7 +2377,7 @@ class TradingBot:
             df_check = self.mt5.get_market_data(
                 symbol=self.config.symbol,
                 timeframe=self.config.execution_timeframe,
-                count=50,
+                count=1000,
             )
             
             if len(df_check) == 0:
