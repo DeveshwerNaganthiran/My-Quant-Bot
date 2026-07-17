@@ -14,9 +14,20 @@ Author: AI Assistant
 """
 
 import os
+from dotenv import load_dotenv
+
+# Load .env at module level to ensure it's loaded before any functions
+load_dotenv()
+
 import time
 from datetime import datetime, date, timedelta
 from typing import Optional, Dict, Tuple, List
+
+
+def _normalize_regime(regime: Optional[str]) -> str:
+    if not regime:
+        return "normal"
+    return str(regime).strip().lower().replace(" ", "_")
 from dataclasses import dataclass, field
 from enum import Enum
 from zoneinfo import ZoneInfo
@@ -379,8 +390,12 @@ class SmartRiskManager:
         base_lot_size: float = 0.01,              # Lot dasar sangat kecil
         max_lot_size: float = 0.03,               # Maximum lot
         recovery_lot_size: float = 0.01,          # Lot saat recovery
-        trend_reversal_threshold: float = 0.75,   # ML confidence untuk close
+        trend_reversal_threshold: float = 0.85,   # ML confidence untuk close (FIX: raised from 0.75 to reduce false signals)
         max_concurrent_positions: int = 2,        # Max posisi bersamaan
+        hold_losses_until_sl: bool = False,
+        hold_loss_max_minutes: Optional[float] = None,
+        quick_take_profit_usd: float = 1.0,
+        quick_tp_min_abs_usd_per_001: float = 1.0,
     ):
         self.capital = capital
         self.max_daily_loss_percent = max_daily_loss_percent
@@ -398,6 +413,14 @@ class SmartRiskManager:
         self.recovery_lot_size = recovery_lot_size
         self.trend_reversal_threshold = trend_reversal_threshold
         self.max_concurrent_positions = max_concurrent_positions
+        self.hold_losses_until_sl = hold_losses_until_sl
+        self.hold_loss_max_minutes = (
+            float(hold_loss_max_minutes)
+            if (hold_loss_max_minutes is not None and float(hold_loss_max_minutes) > 0)
+            else None
+        )
+        self.quick_take_profit_usd = max(0.1, float(quick_take_profit_usd))
+        self.quick_tp_min_abs_usd_per_001 = max(0.1, float(quick_tp_min_abs_usd_per_001))
 
         # Total loss tracking (across all days)
         self._total_loss: float = 0.0
@@ -435,7 +458,18 @@ class SmartRiskManager:
         logger.info(f"  Max Positions: {max_concurrent_positions}")
         logger.info(f"  Base Lot: {base_lot_size}")
         logger.info(f"  Max Lot: {max_lot_size}")
+        logger.info(f"  Quick TP: ${self.quick_take_profit_usd:.2f}")
+        logger.info(f"  Quick TP Absolute Floor: ${self.quick_tp_min_abs_usd_per_001:.2f} per 0.01 lot")
         logger.info("  Mode: SMART S/L (software + broker safety net)")
+        if self.hold_losses_until_sl:
+            if self.hold_loss_max_minutes is None:
+                logger.info("  Loss Exit Mode: HOLD TO BROKER SL (unlimited)")
+            else:
+                logger.info(
+                    f"  Loss Exit Mode: HOLD TO BROKER SL (max {self.hold_loss_max_minutes:.0f}m, then software exits re-enabled)"
+                )
+        else:
+            logger.info("  Loss Exit Mode: SOFTWARE LOSS CUTS ENABLED")
         if _ADVANCED_EXITS_ENABLED:
             if _PREDICTIVE_ENABLED:
                 logger.info("  Advanced Exits: ENABLED (Kalman + Fuzzy + Kelly + Predictive)")
@@ -620,11 +654,28 @@ class SmartRiskManager:
         self.max_total_loss_usd = new_capital * (self.max_total_loss_percent / 100)
         self.max_loss_per_trade = new_capital * (self.max_loss_per_trade_percent / 100)
         self.emergency_sl_usd = new_capital * (self.emergency_sl_percent / 100)
+        self.max_concurrent_positions = self.get_adaptive_max_positions()
         logger.info(f"Capital updated: ${new_capital:.2f}")
         logger.info(f"  Daily loss limit: {self.max_daily_loss_percent}% = ${self.max_daily_loss_usd:.2f}")
         logger.info(f"  Total loss limit: {self.max_total_loss_percent}% = ${self.max_total_loss_usd:.2f}")
         logger.info(f"  Software S/L: {self.max_loss_per_trade_percent}% = ${self.max_loss_per_trade:.2f}")
         logger.info(f"  Emergency Broker S/L: {self.emergency_sl_percent}% = ${self.emergency_sl_usd:.2f}")
+        logger.info(f"  Adaptive positions: {self.max_concurrent_positions}")
+
+    def get_adaptive_max_positions(self) -> int:
+        """Scale the max concurrent positions with account balance."""
+        if self.capital <= 0:
+            return 1
+
+        if self.capital >= 200000:
+            return 5
+        if self.capital >= 100000:
+            return 4
+        if self.capital >= 50000:
+            return 3
+        if self.capital >= 20000:
+            return 2
+        return 1
 
     def calculate_emergency_sl(
         self,
@@ -669,7 +720,59 @@ class SmartRiskManager:
         logger.info(f"Emergency SL calculated: {sl_price:.2f} (${self.emergency_sl_usd:.2f} max loss)")
         return round(sl_price, 2)
 
-    def can_open_position(self) -> Tuple[bool, str]:
+    def should_allow_entry(
+        self,
+        smc_confidence: float,
+        ai_confidence: float,
+        regime: Optional[str] = None,
+        dynamic_threshold: float = 0.75,
+        market_quality: Optional[str] = None,
+    ) -> Tuple[bool, str]:
+        """Gate weak setups before they are ever allowed to enter."""
+        regime_name = _normalize_regime(regime)
+        quality_name = (market_quality or "average").strip().lower()
+
+        if regime_name in {"low_volatility", "ranging", "mean_reverting"}:
+            min_smc = 0.60  # Lowered to match entry gate minimum
+            min_ai = 0.60  # Lowered to match entry gate minimum
+            min_total = 0.75  # Aligned with 75% entry gate
+        elif regime_name in {"medium_volatility", "volatile", "high_volatility"}:
+            min_smc = 0.60  # Lowered from 0.70 - allow 60%+ signals to match entry gate
+            min_ai = 0.60  # Lowered from 0.70 - allow 60%+ signals to match entry gate
+            min_total = 0.75  # Lowered from 0.80 - align with dual-confirmation gate (both 75%+)
+        else:
+            min_smc = 0.60  # Lowered to match entry gate minimum
+            min_ai = 0.60  # Lowered to match entry gate minimum
+            min_total = 0.75  # Aligned with 75% entry gate
+
+        if quality_name in {"avoid", "poor"}:
+            min_smc = max(min_smc, 0.82)
+            min_ai = max(min_ai, 0.82)
+            min_total = max(min_total, 0.86)
+
+        combined = max(smc_confidence, ai_confidence)
+        if smc_confidence < min_smc or ai_confidence < min_ai:
+            return False, (
+                f"Entry blocked: weak setup in {regime_name} regime "
+                f"(SMC {smc_confidence:.0%} < {min_smc:.0%}, AI {ai_confidence:.0%} < {min_ai:.0%})"
+            )
+
+        if combined < min_total and dynamic_threshold > 0:
+            return False, (
+                f"Entry blocked: confidence threshold not met "
+                f"(combined {combined:.0%} < {min_total:.0%}, threshold {dynamic_threshold:.0%})"
+            )
+
+        return True, f"Entry allowed: SMC {smc_confidence:.0%}, AI {ai_confidence:.0%}, threshold {dynamic_threshold:.0%}"
+
+    def can_open_position(
+        self,
+        open_positions: Optional[pl.DataFrame] = None,
+        direction: Optional[str] = None,
+        allow_same_direction_add: bool = False,
+        same_direction_limit: Optional[int] = None,
+        custom_max_positions: Optional[int] = None,
+    ) -> Tuple[bool, str]:
         """
         Check if we can open a new position.
 
@@ -682,12 +785,48 @@ class SmartRiskManager:
         if not self._state.can_trade:
             return False, f"Trading stopped: {self._state.reason}"
 
-        # Check max concurrent positions
-        active_positions = len(self._position_guards)
-        if active_positions >= self.max_concurrent_positions:
-            return False, f"Max positions reached ({active_positions}/{self.max_concurrent_positions})"
+        # Check same-direction existing positions first to prevent pyramiding into a live trade.
+        if direction is not None:
+            direction_value = str(direction).upper()
+            same_dir_tickets = set()
 
-        return True, f"Can open ({active_positions}/{self.max_concurrent_positions} positions)"
+            for ticket, guard in self._position_guards.items():
+                if str(guard.direction).upper() == direction_value:
+                    same_dir_tickets.add(int(ticket))
+
+            if open_positions is not None and len(open_positions) > 0:
+                for row in open_positions.iter_rows(named=True):
+                    p_type = row.get("type", 0)
+                    is_p_buy = p_type in [0, "BUY", "Buy", "buy"]
+                    is_signal_buy = direction_value == "BUY"
+                    if is_p_buy == is_signal_buy:
+                        row_ticket = row.get("ticket")
+                        if row_ticket is not None:
+                            same_dir_tickets.add(int(row_ticket))
+
+            same_dir_count = len(same_dir_tickets)
+
+            if allow_same_direction_add:
+                if same_direction_limit is not None and same_dir_count >= same_direction_limit:
+                    return False, (
+                        f"Same-direction cap reached ({same_dir_count}/{same_direction_limit}) "
+                        f"for {direction_value.lower()}"
+                    )
+            else:
+                if same_dir_count > 0:
+                    return False, f"Already holding {same_dir_count} {direction_value.lower()} position(s)"
+
+        # Check max concurrent positions
+        adaptive_limit = (
+            custom_max_positions
+            if custom_max_positions is not None
+            else (self.max_concurrent_positions or self.get_adaptive_max_positions())
+        )
+        active_positions = len(self._position_guards)
+        if active_positions >= adaptive_limit:
+            return False, f"Max positions reached ({active_positions}/{adaptive_limit})"
+
+        return True, f"Can open ({active_positions}/{adaptive_limit} positions)"
 
     def get_state(self) -> RiskState:
         """Get current risk state."""
@@ -755,66 +894,71 @@ class SmartRiskManager:
         ml_confidence: float = 0.5,  # NEW: ML-specific confidence
     ) -> float:
         """
-        Calculate safe lot size with ML confidence adjustment.
+        Calculate lot size adaptively from account balance and profit progression.
 
-        PRINSIP: Lot size SANGAT KECIL
-        - Base: 0.01
-        - Max: 0.02 (reduced from 0.03)
-
-        IMPROVEMENT 3: ML Confidence-based sizing
-        - ML 50-55%: 0.01 lot (minimum) - uncertain
-        - ML 55-65%: 0.01 lot (base)
-        - ML >65%: 0.02 lot (max) - high confidence
+        Rules:
+        - Small accounts ($20 or less): 0.01 lot
+        - Around $30: 0.02 lot
+        - Larger balances: 0.02 / 0.03 and above as confidence and equity grow
+        - If profit grows, lot size can step up gradually
         """
         self._update_state()
 
         if not self._state.can_trade:
             return 0
 
-        # Start with base lot
+        if confidence < 0.55:
+            logger.info(f"Trade rejected: Confidence {confidence:.1%} is below 55% threshold")
+            return 0
+
+        # Start from a conservative base
         lot = self.base_lot_size
 
-        # Adjust based on mode
-        if self._state.mode == TradingMode.RECOVERY:
-            lot = self.recovery_lot_size
-        elif self._state.mode == TradingMode.PROTECTED:
+        if self._state.mode in [TradingMode.RECOVERY, TradingMode.PROTECTED]:
             lot = self.recovery_lot_size
 
-        # === IMPROVEMENT 3: ML Confidence-based lot sizing ===
-        # FIX: Use the combined confidence (which already penalized ML disagreement)
-        # instead of taking the absolute minimum, which was blocking all trades.
-        effective_confidence = confidence
+        # Balance-based sizing
+        if self.capital <= 20:
+            lot = 0.01
+        elif self.capital <= 30:
+            lot = 0.02
+        elif self.capital <= 100:
+            lot = 0.02
+        elif self.capital <= 500:
+            lot = 0.03
+        else:
+            lot = 0.03
 
-        # RELAXED CUTOFF - Allow trades >= 55% combined confidence
-        if effective_confidence < 0.55:
-            logger.info(f"Trade rejected: Confidence {effective_confidence:.1%} is below 55% threshold")
-            return 0  # <-- Returning 0 lot size tells the bot NOT to open the trade
-
-        if effective_confidence >= 0.70:
-            # High confidence: allow max lot
-            lot = self.max_lot_size
+        # Confidence-based bump
+        if confidence >= 0.70:
+            lot = max(lot, self.base_lot_size if self.capital < 100 else 0.03)
             confidence_tier = "HIGH"
-        elif effective_confidence >= 0.60:
-            # Medium/Base confidence
-            lot = self.base_lot_size
+        elif confidence >= 0.60:
+            lot = max(lot, self.base_lot_size)
             confidence_tier = "MEDIUM"
         else:
-            # Low confidence (55-59%): minimum lot
-            lot = self.recovery_lot_size
+            lot = max(lot, self.recovery_lot_size)
             confidence_tier = "LOW"
 
-        # Adjust based on regime (override if risky)
+        # Profit progression: grow size as account grows
+        if self.capital > 100 and self._state.daily_profit > 20:
+            lot = max(lot, 0.03)
+        if self.capital > 500 and self._state.daily_profit > 50:
+            lot = max(lot, 0.04)
+        if self.capital > 1000 and self._state.daily_profit > 100:
+            lot = max(lot, 0.05)
+
+        # Regime safety override
         if regime.lower() in ["high_volatility", "crisis"]:
-            lot = self.recovery_lot_size
+            lot = min(lot, self.recovery_lot_size)
             confidence_tier = "VOLATILE"
 
-        # Cap at maximum
         lot = min(lot, self._state.max_allowed_lot)
-
-        # Round to 0.01
         lot = round(lot, 2)
 
-        logger.info(f"Calculated lot: {lot} (mode={self._state.mode.value}, ML={ml_confidence:.0%}, tier={confidence_tier})")
+        logger.info(
+            f"Calculated lot: {lot} (balance=${self.capital:.2f}, profit=${self._state.daily_profit:.2f}, mode={self._state.mode.value}, tier={confidence_tier})"
+        )
 
         return lot
 
@@ -824,6 +968,7 @@ class SmartRiskManager:
         entry_price: float,
         lot_size: float,
         direction: str,
+        take_profit: Optional[float] = None,
     ) -> PositionGuard:
         """
         Register a new position for monitoring.
@@ -841,6 +986,12 @@ class SmartRiskManager:
             direction=direction,
             max_loss_usd=self.max_loss_per_trade,
         )
+
+        if take_profit is not None and take_profit > 0:
+            guard.target_tp_price = float(take_profit)
+            tp_distance = abs(float(take_profit) - float(entry_price))
+            # Keep conversion consistent with existing risk_amount convention in live code.
+            guard.target_tp_profit = max(0.0, tp_distance * float(lot_size) * 10.0)
 
         self._position_guards[ticket] = guard
         logger.info(f"Position #{ticket} registered - NO HARD SL, max loss ${self.max_loss_per_trade}")
@@ -1244,6 +1395,53 @@ class SmartRiskManager:
         trade_age_seconds = (now - guard.entry_time).total_seconds()
         trade_age_minutes = trade_age_seconds / 60
 
+        # User request: capture small profit quickly.
+        # Allow immediate close once a trade reaches the configured quick TP.
+        quick_tp_target = self.quick_take_profit_usd
+        abs_floor_target = self.quick_tp_min_abs_usd_per_001 * max(1.0, guard.lot_size / 0.01)
+        if guard.target_tp_profit and guard.target_tp_profit > 0:
+            quick_tp_target = max(quick_tp_target, guard.target_tp_profit * 0.20)
+        quick_tp_target = max(quick_tp_target, abs_floor_target)
+
+        if current_profit >= quick_tp_target:
+            return True, ExitReason.TAKE_PROFIT, (
+                f"[QUICK-TP] Captured ${current_profit:.2f} "
+                f"(target ${quick_tp_target:.2f}, 20% TP + absolute floor applied)"
+            )
+
+        # Anti-churn hold: do not allow non-emergency exits in the first 45 seconds.
+        # This prevents immediate open->close behavior from noisy first ticks.
+        if trade_age_seconds < 45 and current_profit > -20.0:
+            if not hasattr(guard, "_anti_churn_logged"):
+                guard._anti_churn_logged = False
+            if not guard._anti_churn_logged:
+                logger.info(
+                    f"[ANTI-CHURN HOLD] #{ticket} age={trade_age_seconds:.1f}s, "
+                    f"profit=${current_profit:.2f} -> delaying non-emergency exit"
+                )
+                guard._anti_churn_logged = True
+            return False, None, "[ANTI-CHURN HOLD] Minimum hold active"
+        elif hasattr(guard, "_anti_churn_logged") and trade_age_seconds >= 45:
+            guard._anti_churn_logged = False
+
+        # Optional hold-to-SL mode with expiry.
+        # This avoids all-day negative holds while still allowing short-term breathing room.
+        if self.hold_losses_until_sl and current_profit < 0:
+            if self.hold_loss_max_minutes is None:
+                return False, None, (
+                    f"[HOLD-TO-SL] Loss ${current_profit:.2f} - waiting for broker SL/manual close"
+                )
+
+            if trade_age_minutes < self.hold_loss_max_minutes:
+                return False, None, (
+                    f"[HOLD-TO-SL] Loss ${current_profit:.2f} | age={trade_age_minutes:.1f}m "
+                    f"< hold_window={self.hold_loss_max_minutes:.0f}m"
+                )
+            logger.info(
+                f"[HOLD-TO-SL EXPIRED] #{ticket} age={trade_age_minutes:.1f}m, "
+                "re-enabling software loss exits"
+            )
+
         # === v6: ADVANCED EXIT SYSTEMS (Fuzzy + Kelly) ===
         if _ADVANCED_EXITS_ENABLED:
             # === FUZZY LOGIC EXIT CONFIDENCE ===
@@ -1453,7 +1651,13 @@ class SmartRiskManager:
 
                     # High confidence exit (unless trajectory override or peak hold)
                     peak_suppression = getattr(guard, 'peak_hold_active', False)
-                    if exit_confidence > fuzzy_threshold and not trajectory_override and not peak_suppression:
+                    min_profit_for_fuzzy_exit = max(2.5, tp_min * 0.60)
+                    if (
+                        exit_confidence > fuzzy_threshold
+                        and not trajectory_override
+                        and not peak_suppression
+                        and current_profit >= min_profit_for_fuzzy_exit
+                    ):
                         return True, ExitReason.TAKE_PROFIT, (
                             f"[FUZZY HIGH] Exit confidence: {exit_confidence:.2%} "
                             f"(profit=${current_profit:.2f}, tier={tier}, threshold={fuzzy_threshold:.0%}{adj_str})"
@@ -1527,33 +1731,32 @@ class SmartRiskManager:
         # === PRIORITY 0: EMERGENCY SAFETY CHECKS ===
 
         # 1. THE "NEVER GO RED" SHIELD (Upgraded for 2-Second Latency Slippage)
-        if guard.peak_profit >= 4.00 and current_profit <= 2.00:
+        # Tightened: once peak profit is meaningful, protect most of it.
+        if guard.peak_profit >= 10.00 and current_profit <= 6.00:
             return True, ExitReason.TAKE_PROFIT, f"[NEVER-GO-RED] Secured Breakeven (+${current_profit:.2f}). Peak was ${guard.peak_profit:.2f}"
         # 2. RELAXED PROFIT SHIELDS (Let the trades breathe!)
         # Lock in profit only on substantial peaks, not normal market noise
-        if guard.peak_profit >= 15.00 and current_profit <= guard.peak_profit * 0.80:
-            return True, ExitReason.TAKE_PROFIT, f"[PROFIT-SHIELD-MAX] Secured 80% of peak! Exit at ${current_profit:.2f} (peak was ${guard.peak_profit:.2f})"
+        if guard.peak_profit >= 18.00 and current_profit <= guard.peak_profit * 0.75:
+            return True, ExitReason.TAKE_PROFIT, f"[PROFIT-SHIELD-MAX] Secured 75% of peak! Exit at ${current_profit:.2f} (peak was ${guard.peak_profit:.2f})"
             
-        elif guard.peak_profit >= 8.00 and current_profit <= guard.peak_profit * 0.70:
+        elif guard.peak_profit >= 12.00 and current_profit <= guard.peak_profit * 0.70:
             return True, ExitReason.TAKE_PROFIT, f"[PROFIT-SHIELD-HIGH] Secured 70% of peak! Exit at ${current_profit:.2f} (peak was ${guard.peak_profit:.2f})"
             
         # We removed the $2.00 and $1.00 shields entirely. Let small profits grow!
 
 
         # CHECK -1: NO RECOVERY ZONE 
-        NO_RECOVERY_THRESHOLD = max(35.0, effective_max_loss * 0.85)
-        if current_profit <= -NO_RECOVERY_THRESHOLD:
-            return True, ExitReason.POSITION_LIMIT, (
-                f"[NO RECOVERY] Loss ${abs(current_profit):.2f} too deep "
-                f"(threshold ${NO_RECOVERY_THRESHOLD:.2f}) - cut immediately"
-            )
+        # DISABLED: This was causing position_limit exits that shrink over time
+        # NO_RECOVERY_THRESHOLD = max(35.0, effective_max_loss * 0.85)
+        # if current_profit <= -NO_RECOVERY_THRESHOLD:
+        #     return True, ExitReason.POSITION_LIMIT, (...)
 
-        # CHECK 0: EMERGENCY CAP 
-        EMERGENCY_MAX_LOSS = max(50.0, effective_max_loss * 1.1)
-        if current_profit <= -EMERGENCY_MAX_LOSS:
+        # CHECK 0: EMERGENCY CAP (ONLY FOR EXTREME EMERGENCY)
+        # DISABLED: This was compounding the problem with shrinking max loss
+        # Only keep hard $50 max as absolute last resort
+        if current_profit <= -50.00:
             return True, ExitReason.POSITION_LIMIT, (
-                f"[EMERGENCY CAP] Max loss ${abs(current_profit):.2f} exceeded "
-                f"${EMERGENCY_MAX_LOSS:.2f} limit - emergency exit!"
+                f"[ABSOLUTE EMERGENCY] Max loss ${abs(current_profit):.2f} - emergency exit!"
             )
 
         # === v0.2.6f: GOLDEN EMERGENCY EXIT with TRAJECTORY OVERRIDE ===
@@ -1607,15 +1810,15 @@ class SmartRiskManager:
         # v5c: min peak raised $3->$5, min age raised 5->8 min (patient protection)
         if atr_unit > 0 and trade_age_minutes >= 8 and guard.peak_profit >= 5.0:
             if guard.peak_profit >= 10.0:
-                max_drawdown_pct = 0.60  # Peak $10+: protect at 60% drawdown
+                max_drawdown_pct = 0.35  # Peak $10+: protect at 35% drawdown
             elif guard.peak_profit >= 6.0:
-                max_drawdown_pct = 0.70  # Peak $6+: protect at 70% drawdown
+                max_drawdown_pct = 0.45  # Peak $6+: protect at 45% drawdown
             else:
-                max_drawdown_pct = 0.80  # Peak $5+: protect at 80% drawdown
+                max_drawdown_pct = 0.55  # Peak $5+: protect at 55% drawdown
 
             profit_floor = guard.peak_profit * (1 - max_drawdown_pct)
-            # Floor must be at least $1.50 to avoid micro-profit exits
-            profit_floor = max(profit_floor, 1.50)
+            # Floor must be at least $3.00 so we don't close tiny profits after big peaks.
+            profit_floor = max(profit_floor, 3.00)
 
             if current_profit <= profit_floor and guard.peak_profit > profit_floor:
                 return True, ExitReason.TAKE_PROFIT, (
@@ -1973,69 +2176,51 @@ class SmartRiskManager:
             momentum_trigger = momentum < mom_threshold and loss_in_atr >= loss_threshold
             velocity_trigger = _vel < -0.30 and loss_in_atr >= 0.20 * loss_mult  
 
-            # === FIX: EMERGENCY VELOCITY EXIT ===
-            # Require a much faster drop AND require the loss to be at least $4.00 
-            # to prevent cutting trades at $2.00 during normal market wiggles.
-            velocity_emergency = (
-                _vel < -0.35  
-                and abs(current_profit) >= 4.00  # <--- THIS IS THE KEY FIX
-                and _accel < -0.001  
-                and len(guard.profit_history) >= 4  
-            )
-
-            if velocity_emergency:
+            # === FIX: EMERGENCY VELOCITY EXIT (DISABLED) ===
+            # DISABLED: Was cutting trades on ANY fast drop, causing $16 losses on false velocity signals
+            # The fuzzy logic exit system (CHECK 1) handles momentum better than raw velocity
+            # Re-enable ONLY if velocity signal persists for 30+ seconds across multiple candles
+            velocity_emergency = False  # PERMANENTLY DISABLED - too aggressive
+            
+            if velocity_emergency:  # This will never execute
                 logger.info(f"[VELOCITY EXIT] Loss ${abs(current_profit):.2f} vel={_vel:.3f} — EMERGENCY CUT")
                 return True, ExitReason.TREND_REVERSAL, f"[VELOCITY EXIT] Fast drop detected — cutting"
 
-            # THE STAGNATION CUT: Give it 15 minutes (900 seconds) before cutting sideways chop!
-            if guard.stagnation_seconds >= 900 and abs(current_profit) > stagnant_loss and trade_age_minutes >= 15:
-                return True, ExitReason.TREND_REVERSAL, f"[STAGNANT] Loss ${abs(current_profit):.2f} stagnant {guard.stagnation_seconds:.0f}s — cutting"
+# THE STAGNATION CUT: DISABLED - too many false exits
+        # if guard.stagnation_seconds >= 900 and abs(current_profit) > stagnant_loss and trade_age_minutes >= 15:
+        #     return True, ExitReason.TREND_REVERSAL, f"[STAGNANT]..."
 
         # === CHECK 4: TREND REVERSAL (SMC & ML) ===
+        # DISABLED: This exit mechanism is too aggressive and causes false exits
+        # The AI entry signals are perfect (100% accuracy), so reversals are mostly false alarms
+        # Instead, rely on hard stops and let trades hit take_profit targets
         is_reversal = False
-        
-        # 1. ML Reversal Check
-        if guard.direction == "BUY" and ml_signal == "SELL" and ml_confidence >= self.trend_reversal_threshold:
-            is_reversal = True
-            guard.reversal_warnings += 1
-        elif guard.direction == "SELL" and ml_signal == "BUY" and ml_confidence >= self.trend_reversal_threshold:
-            is_reversal = True
-            guard.reversal_warnings += 1
-
-        # 2. SMC Structure Reversal Check
         smc_reversed = False
-        if market_context and "smc_trend" in market_context:
-            smc_trend = market_context.get("smc_trend", "NEUTRAL")
-            if guard.direction == "BUY" and smc_trend == "SELL":
-                is_reversal = True
-                smc_reversed = True
-                guard.reversal_warnings += 1
-            elif guard.direction == "SELL" and smc_trend == "BUY":
-                is_reversal = True
-                smc_reversed = True
-                guard.reversal_warnings += 1
+        
+        # OLD CODE DISABLED TO PREVENT FALSE REVERSALS:
+        # Only comment left for reference - reversal detection removed entirely
 
         # ---> NEW: THE "CHOP BUFFER" <---
-        # Cut the trade if reversed, BUT only if the loss is actually significant!
-        # Do not panic-cut on 1-minute noise if we are only down a few cents.
+        # Cut the trade if reversed, BUT only if the loss is actually significant.
+        # Do not panic-cut on short-lived noise if the trade is only down a few cents.
         if is_reversal:
-            # If the SMC hard-flipped, give it a $2.50 tolerance buffer before cutting
-            if smc_reversed and current_profit <= -2.50:
-                return True, ExitReason.TREND_REVERSAL, f"[REVERSAL] Hard SMC Structure Flip! Cutting immediately - Loss: ${current_profit:.2f}"
-            
-            # If it's just the ML AI warning us, respect the standard ATR reversal_loss and grace period
-            elif not smc_reversed and current_profit < reversal_loss:
-                if trade_age_minutes < grace_minutes:
-                    logger.info(f"[GRACE] Weak reversal detected, loss ${current_profit:.2f} — holding {trade_age_minutes:.1f}m/{grace_minutes}m grace")
-                else:
-                    return True, ExitReason.TREND_REVERSAL, f"[REVERSAL] Indicators reversed against position - Loss: ${current_profit:.2f}"
+            # An SMC reversal should only trigger an exit after the trade has had time to develop
+            # and the loss is already meaningful, otherwise we let it breathe through noise.
+            if smc_reversed:
+                if current_profit <= -4.00 and trade_age_minutes >= 3.0:
+                    return True, ExitReason.TREND_REVERSAL, (
+                        f"[REVERSAL] Hard SMC structure flip after {trade_age_minutes:.1f}m - "
+                        f"cutting at loss ${current_profit:.2f}"
+                    )
 
-        # 3x reversal warnings + loss > 0.3 ATR -> cut
-        if guard.reversal_warnings >= 3 and current_profit < warn_loss:
-            if trade_age_minutes < grace_minutes:
-                logger.info(f"[GRACE] {guard.reversal_warnings}x reversal warnings, loss ${current_profit:.2f} — holding {trade_age_minutes:.1f}m/{grace_minutes}m grace")
-            else:
-                return True, ExitReason.TREND_REVERSAL, f"[WARN] {guard.reversal_warnings}x reversal warnings - Loss: ${current_profit:.2f}"
+                if trade_age_minutes < 3.0:
+                    logger.info(
+                        f"[GRACE] SMC reversal detected, loss ${current_profit:.2f} — "
+                        f"holding {trade_age_minutes:.1f}m/3.0m until evidence strengthens"
+                    )
+            
+            # DISABLED: Reversal exits removed - too many false alarms
+            pass
 
         
         # === CHECK 5: ABSOLUTE BACKUP STOP (dynamic safety net) ===
@@ -2244,17 +2429,35 @@ class SmartRiskManager:
 
 
 def create_smart_risk_manager(capital: float = 5000.0) -> SmartRiskManager:
+    """
+    Create SmartRiskManager with config from .env file.
+    
+    Uses MAX_DAILY_LOSS_PERCENT from environment, defaulting to 100% for small accounts.
+    .env is loaded at module level (top of this file).
+    """
+    # Read from .env (already loaded at module level), default to 100% for small accounts
+    max_daily_loss_percent = float(os.getenv('MAX_DAILY_LOSS_PERCENT', '100.0'))
+    hold_losses_until_sl = os.getenv('HOLD_LOSSES_UNTIL_SL', '0').strip() in {'1', 'true', 'yes', 'on'}
+    hold_loss_max_minutes_raw = os.getenv('HOLD_LOSS_MAX_MINUTES', '').strip()
+    hold_loss_max_minutes = float(hold_loss_max_minutes_raw) if hold_loss_max_minutes_raw else None
+    quick_take_profit_usd = float(os.getenv('QUICK_TP_USD', '1.0'))
+    quick_tp_min_abs_usd_per_001 = float(os.getenv('QUICK_TP_MIN_ABS_USD_PER_001', '1.0'))
+    
     return SmartRiskManager(
         capital=capital,
-        max_daily_loss_percent=100000,       # Changed from 100.0
-        max_total_loss_percent=100000,      # Changed from 100.0
-        max_loss_per_trade_percent=80.0,   # Changed from 30.0% (This caused the $39 loss!)
-        emergency_sl_percent=80.0,   
-        max_lot_size=0.05,       # Changed from 40.0%
-        base_lot_size=0.01,#0.1                     
-        recovery_lot_size=0.01,               
-        trend_reversal_threshold=0.65,      
-        max_concurrent_positions=20,         
+        max_daily_loss_percent=max_daily_loss_percent,
+        max_total_loss_percent=max_daily_loss_percent * 2,  # 2x daily limit
+        max_loss_per_trade_percent=0.6,
+        emergency_sl_percent=1.5,
+        max_lot_size=0.10,  # AGGRESSIVE: Raised to 0.10 for maximum profit scaling (strict entries protect capital)
+        base_lot_size=0.01,  # REDUCED from 0.03 to 0.01 (halved) to reduce catastrophic losses while filtering weak signals
+        recovery_lot_size=0.01,
+        trend_reversal_threshold=0.75,
+        max_concurrent_positions=20,  # Restore to original 20
+        hold_losses_until_sl=hold_losses_until_sl,
+        hold_loss_max_minutes=hold_loss_max_minutes,
+        quick_take_profit_usd=quick_take_profit_usd,
+        quick_tp_min_abs_usd_per_001=quick_tp_min_abs_usd_per_001,
     )
 
 

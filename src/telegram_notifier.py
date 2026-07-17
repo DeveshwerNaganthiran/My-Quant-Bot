@@ -175,6 +175,7 @@ class TelegramNotifier:
         """
         Poll Telegram for new commands and dispatch handlers.
         Returns number of commands processed.
+        Gracefully handles network timeouts and connection errors.
         """
         if not self.enabled:
             return 0
@@ -184,10 +185,19 @@ class TelegramNotifier:
             url = f"{self._api_url}/getUpdates"
             params = {"offset": self._last_update_id + 1, "timeout": 0, "limit": 10}
 
-            async with session.get(url, params=params, timeout=5) as resp:
-                if resp.status != 200:
-                    return 0
-                data = await resp.json()
+            try:
+                async with session.get(url, params=params, timeout=5) as resp:
+                    if resp.status != 200:
+                        return 0
+                    data = await resp.json()
+            except (asyncio.TimeoutError, asyncio.CancelledError) as e:
+                # Network timeout - just return silently and retry next poll
+                logger.debug(f"Telegram poll timeout (recoverable): {type(e).__name__}")
+                return 0
+            except Exception as e:
+                # Other network errors - log and continue
+                logger.debug(f"Telegram poll network error: {e}")
+                return 0
 
             if not data.get("ok") or not data.get("result"):
                 return 0

@@ -402,6 +402,134 @@ class AutoTrainer:
                 shutil.rmtree(old_backup)
                 logger.debug(f"Removed old backup: {old_backup}")
 
+    def _recent_trade_log_paths(self, now_wib: datetime) -> list[Path]:
+        """Return current and previous month trade CSV paths (if they exist)."""
+        trade_dir = self.data_dir / "trade_logs" / "trades"
+        paths = []
+
+        current_name = f"trades_{now_wib.year}_{now_wib.month:02d}.csv"
+        current_path = trade_dir / current_name
+        if current_path.exists():
+            paths.append(current_path)
+
+        prev_month = now_wib.month - 1
+        prev_year = now_wib.year
+        if prev_month == 0:
+            prev_month = 12
+            prev_year -= 1
+        prev_name = f"trades_{prev_year}_{prev_month:02d}.csv"
+        prev_path = trade_dir / prev_name
+        if prev_path.exists():
+            paths.append(prev_path)
+
+        return paths
+
+    def _load_bad_trade_windows(self, now_wib: datetime) -> list[tuple[datetime, datetime]]:
+        """Load recent losing-trade windows from trade logs for hard-example boosting."""
+        windows: list[tuple[datetime, datetime]] = []
+        lookback_days = int(os.getenv("BAD_TRADE_LOOKBACK_DAYS", "7"))
+        min_loss_abs = float(os.getenv("BAD_TRADE_MIN_LOSS_USD", "0.01"))
+
+        for csv_path in self._recent_trade_log_paths(now_wib):
+            try:
+                trades = pl.read_csv(str(csv_path), infer_schema_length=5000)
+            except Exception as e:
+                logger.warning(f"Bad-trade learning: failed reading {csv_path.name}: {e}")
+                continue
+
+            required = {"open_time", "close_time", "profit_usd"}
+            if not required.issubset(set(trades.columns)):
+                continue
+
+            try:
+                rows = trades.select(["open_time", "close_time", "profit_usd"]).iter_rows(named=True)
+                for row in rows:
+                    try:
+                        profit = float(row.get("profit_usd") or 0.0)
+                    except Exception:
+                        continue
+                    if profit > -min_loss_abs:
+                        continue
+
+                    open_raw = row.get("open_time")
+                    close_raw = row.get("close_time")
+                    if not open_raw or not close_raw:
+                        continue
+
+                    try:
+                        t0 = datetime.fromisoformat(str(open_raw))
+                        t1 = datetime.fromisoformat(str(close_raw))
+                    except Exception:
+                        continue
+
+                    if t0.tzinfo is None:
+                        t0 = t0.replace(tzinfo=WIB)
+                    if t1.tzinfo is None:
+                        t1 = t1.replace(tzinfo=WIB)
+
+                    if (now_wib - t1).days > lookback_days:
+                        continue
+                    if t1 < t0:
+                        continue
+
+                    # Extend the bad window slightly after close to capture late reversal context.
+                    t1 = t1 + timedelta(minutes=15)
+                    windows.append((t0, t1))
+            except Exception as e:
+                logger.warning(f"Bad-trade learning: failed parsing {csv_path.name}: {e}")
+
+        return windows
+
+    def _boost_bad_trade_samples(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Duplicate samples that overlap recent losing trades to teach the model harder lessons."""
+        if "time" not in df.columns:
+            return df
+
+        now_wib = datetime.now(WIB)
+        windows = self._load_bad_trade_windows(now_wib)
+        if not windows:
+            logger.info("Bad-trade learning: no recent losing trades found for boosting")
+            return df
+
+        boost = float(os.getenv("BAD_TRADE_LEARNING_BOOST", "2.0"))
+        extra_copies = max(0, int(round(boost)) - 1)
+        if extra_copies <= 0:
+            return df
+
+        max_extra_ratio = float(os.getenv("BAD_TRADE_MAX_EXTRA_RATIO", "0.5"))
+        max_extra_rows = int(len(df) * max(0.05, max_extra_ratio))
+
+        mask_expr = None
+        for start_dt, end_dt in windows:
+            cond = (pl.col("time") >= pl.lit(start_dt)) & (pl.col("time") <= pl.lit(end_dt))
+            mask_expr = cond if mask_expr is None else (mask_expr | cond)
+
+        if mask_expr is None:
+            return df
+
+        hard_df = df.filter(mask_expr)
+        if len(hard_df) == 0:
+            logger.info("Bad-trade learning: no overlapping bars found in current training frame")
+            return df
+
+        extras = []
+        for _ in range(extra_copies):
+            extras.append(hard_df)
+
+        boosted_df = pl.concat([df] + extras, how="vertical")
+        extra_rows = len(boosted_df) - len(df)
+        if extra_rows > max_extra_rows:
+            # Cap oversampling to avoid overpowering the original distribution.
+            keep_rows = len(df) + max_extra_rows
+            boosted_df = boosted_df.sample(n=keep_rows, with_replacement=False, shuffle=True)
+            extra_rows = len(boosted_df) - len(df)
+
+        logger.info(
+            f"Bad-trade learning: boosted {len(hard_df)} hard bars with x{extra_copies + 1:.0f} weighting "
+            f"(+{extra_rows} rows, windows={len(windows)})"
+        )
+        return boosted_df
+
     def retrain(
         self,
         connector,  # MT5Connector
@@ -496,6 +624,9 @@ class AutoTrainer:
             # Create target
             df = fe.create_target(df, lookahead=1)
 
+            # Learn harder from recent losing executions by upweighting overlapping bars.
+            df = self._boost_bad_trade_samples(df)
+
             # Train HMM
             logger.info("Training HMM Regime Model...")
             hmm = MarketRegimeDetector(
@@ -514,21 +645,9 @@ class AutoTrainer:
             logger.info("Adding V2 features for enhanced model training...")
             fe_v2 = MLV2FeatureEngineer()
 
-            # Fetch H1 data for multi-timeframe features
-            df_h1 = None
-            try:
-                df_h1 = connector.get_market_data(symbol, "H1", min(bars // 4, 2000))
-                if len(df_h1) > 30:
-                    df_h1 = fe.calculate_all(df_h1, include_ml_features=False)
-                    df_h1 = smc.calculate_all(df_h1)
-                    logger.info(f"H1 data fetched: {len(df_h1)} bars for V2 features")
-                else:
-                    df_h1 = None
-                    logger.warning("Insufficient H1 data, using defaults")
-            except Exception as e:
-                logger.warning(f"Could not fetch H1 data: {e}, using defaults")
-
-            df = fe_v2.add_all_v2_features(df, df_h1)
+            # User request: disable H1 context in auto-training.
+            # Keep V2 schema by using default placeholder H1 features.
+            df = fe_v2.add_all_v2_features(df, None)
 
             # Train XGBoost V2 Model (with all available features)
             logger.info("Training XGBoost V2 Model...")

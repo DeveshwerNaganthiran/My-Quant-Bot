@@ -48,8 +48,8 @@ class DynamicConfidenceManager:
     def __init__(
         self,
         base_threshold: float = 0.65,
-        min_threshold: float = 0.55,
-        max_threshold: float = 0.80,
+        min_threshold: float = 0.53,
+        max_threshold: float = 0.65,
     ):
         self.base_threshold = base_threshold
         self.min_threshold = min_threshold
@@ -163,13 +163,13 @@ class DynamicConfidenceManager:
             threshold = self.min_threshold  # 60% - kondisi terbaik
         elif score >= 65:
             quality = MarketQuality.GOOD
-            threshold = 0.65  # 65% - kondisi bagus (turun dari 75%)
+            threshold = 0.55  # 65% - kondisi bagus (turun dari 75%)
         elif score >= 50:
             quality = MarketQuality.MODERATE
-            threshold = 0.70  # 70% - kondisi biasa (turun dari 80%)
+            threshold = 0.57  # 70% - kondisi biasa (turun dari 80%)
         elif score >= 35:
             quality = MarketQuality.POOR
-            threshold = 0.80  # 80% - kondisi kurang bagus (turun dari 85%)
+            threshold = 0.60  # 80% - kondisi kurang bagus (turun dari 85%)
         else:
             quality = MarketQuality.AVOID
             threshold = self.max_threshold  # 85% - hindari trading

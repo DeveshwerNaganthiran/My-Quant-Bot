@@ -55,7 +55,7 @@ from src.smc_polars import SMCAnalyzer, SMCSignal
 from src.feature_eng import FeatureEngineer
 from src.regime_detector import MarketRegimeDetector, FlashCrashDetector, MarketRegime, RegimeState
 from src.risk_engine import RiskEngine
-from backtests.ml_v2.ml_v2_model import TradingModelV2
+from src.ml_model import TradingModel
 from backtests.ml_v2.ml_v2_feature_eng import MLV2FeatureEngineer
 from src.ml_model import get_default_feature_columns
 from src.position_manager import SmartPositionManager
@@ -67,6 +67,7 @@ from src.smart_risk_manager import SmartRiskManager, create_smart_risk_manager
 from src.dynamic_confidence import DynamicConfidenceManager, create_dynamic_confidence
 from src.trade_logger import TradeLogger, get_trade_logger
 from src.filter_config import FilterConfigManager
+from src.confluence_rules import evaluate_confluence_rule
 
 
 class TradingBot:
@@ -114,9 +115,10 @@ class TradingBot:
         self.risk_engine = RiskEngine(self.config)
         self.filter_config = FilterConfigManager("data/filter_config.json")
 
-        self.ml_model = TradingModelV2(
-            confidence_threshold=0.60,
+        self.ml_model = TradingModel(
+            confidence_threshold=0.55,
             model_path="models/xgboost_model.pkl",
+            min_margin=0.15,
         )
         self.fe_v2 = MLV2FeatureEngineer()
         self._h1_df_cached = None 
@@ -158,7 +160,7 @@ class TradingBot:
         self._execution_times: list = []
         self._current_date = date.today()
         self._models_loaded = False
-        self._trade_cooldown_seconds = 10
+        self._trade_cooldown_seconds = 60
         self._start_time = datetime.now()
         self._daily_start_balance: float = 0
         self._total_session_profit: float = 0
@@ -174,6 +176,19 @@ class TradingBot:
         self._pyramid_done_tickets: set = set()
         self._last_pyramid_time: Optional[datetime] = None
         self._position_check_interval: int = 5
+        self._burst_enabled: bool = True
+        self._burst_lot_size: float = 0.01
+        self._burst_check_interval_seconds: float = 1.0
+        self._burst_window_seconds: int = 20
+        self._burst_cycles: int = 5
+        self._burst_batch_size: int = 5
+        self._burst_hard_cap: int = 25
+        self._burst_same_direction_cap: int = 25
+        self._burst_force_fill_max: bool = True
+        self._basket_profit_lock_enabled: bool = True
+        self._basket_profit_lock_trigger_usd: float = 50.0
+        self._basket_profit_lock_armed: bool = False
+        self._basket_profit_peak_usd: float = 0.0
 
         # Around line 120 in main_live.py, add this line:
         self._is_verifying_trade = False
@@ -192,6 +207,57 @@ class TradingBot:
         self._restore_dashboard_state()
         self._forced_next_direction = None  # Disable the Win/Loss alternator
         self._always_invert = False         # DISABLE PERMANENT INVERSION (Normal Mode)
+        self._h1_bias_enabled: bool = False  # User request: do not compare/score H1 bias for entries
+    
+    def _calculate_pyramided_lot_size(self, base_lot: float, signal_direction: str) -> float:
+        """
+        Calculate pyramided lot size that scales directly with account equity.
+        Conservative scaling to reduce catastrophic losses.
+        
+        Formula: lot_size = 0.01 * (current_equity / 10000), capped at 0.02 max
+        
+        Examples (assuming $82k starting capital):
+        - $5k: 0.01 * 0.5 = 0.005 (min to 0.01)
+        - $10k: 0.01 * 1.0 = 0.01 lot
+        - $20k: 0.01 * 2.0 = 0.02 lot (capped)
+        - $50k: 0.01 * 5.0 = 0.05 lot → capped at 0.02 (max)
+        - $100k: 0.01 * 10.0 = 0.10 lot → capped at 0.02 (max)
+        
+        Conservative: Max 0.02 lot to reduce per-trade losses while maintaining profitability.
+        """
+        try:
+            # Get current account equity using correct MT5Connector API (property, not method)
+            current_equity = self.mt5.account_equity
+            if not current_equity or current_equity <= 0:
+                logger.warning("Could not get account equity, using base lot")
+                return base_lot
+            
+            max_lot = 0.10  # AGGRESSIVE: Hard cap raised to 0.10 to maximize profits on high-conviction trades
+            min_lot = base_lot  # Minimum is base lot
+            
+            # Aggressive equity scaling: 0.01 per $10k of equity
+            # At $10k equity: 0.01 lot
+            # At $20k equity: 0.02 lot
+            # At $50k equity: 0.05 lot
+            # At $80k equity: 0.08 lot (near max)
+            # At $100k+ equity: 0.10 lot (capped)
+            scaled_lot = 0.01 * (current_equity / 10000.0)
+            
+            # Apply caps - allow aggressive scaling since entry filters are strict
+            pyramided_lot = max(min_lot, min(scaled_lot, max_lot))
+            
+            # Log the scaling action
+            logger.info(
+                f"[PYRAMID SCALING] Equity: ${current_equity:.2f} | "
+                f"Scale: {current_equity/10000:.2f}x | "
+                f"Lot: {pyramided_lot:.2f} (Min: {min_lot:.2f}, Max: {max_lot:.2f})"
+            )
+            
+            return pyramided_lot
+            
+        except Exception as e:
+            logger.warning(f"Pyramid calculation error: {e}. Using base lot.")
+            return base_lot
     
     def _load_forced_direction(self):
         """Loads the last forced direction from file."""
@@ -339,18 +405,31 @@ class TradingBot:
         
         try:
             self.ml_model.load()
-            from backtests.ml_v2.ml_v2_model import ModelType
-            self.ml_model.model_type = ModelType.XGBOOST_BINARY
-            
+
+            self.ml_model.confidence_threshold = 0.70
+            self.ml_model.min_margin = 0.15
+
             if self.ml_model.fitted:
-                logger.info("ML V2 Model D loaded successfully")
+                logger.info("Production XGBoost Model loaded successfully")
                 logger.info(f"  Features: {len(self.ml_model.feature_names)}")
-                logger.info(f"  Type: {self.ml_model.model_type.value}")
+                
+                # DIAGNOSTIC: Check feature names
+                if self.ml_model.feature_names:
+                    mtf_features = [f for f in self.ml_model.feature_names if f.startswith(("M1_", "M5_", "M15_"))]
+                    standard_features = [f for f in self.ml_model.feature_names if not any(f.startswith(p) for p in ["M5_", "M1_", "M15_"])]
+                    logger.info(f"  Feature composition: {len(standard_features)} standard, {len(mtf_features)} multi-TF (M1/M5/M15)")
+                    if standard_features:
+                        logger.info(f"  First 5 standard features: {standard_features[:5]}")
+                    if mtf_features:
+                        logger.info(f"  First 5 MTF features: {mtf_features[:5]}")
+                    
+                    # Show full feature list for debugging
+                    logger.debug(f"  All {len(self.ml_model.feature_names)} features: {self.ml_model.feature_names}")
             else:
-                logger.warning("ML V2 Model D not found or not fitted")
+                logger.warning("Production XGBoost Model not found or not fitted")
                 models_ok = False
         except Exception as e:
-            logger.error(f"Failed to load ML V2 Model D: {e}")
+            logger.error(f"Failed to load Production XGBoost Model: {e}")
             models_ok = False
         
         self._models_loaded = models_ok
@@ -923,11 +1002,44 @@ class TradingBot:
 
         # 2. Fallback to model's saved feature names
         if self.ml_model.fitted and self.ml_model.feature_names:
-            return list(self.ml_model.feature_names)
+            expected_features = list(self.ml_model.feature_names)
+            available_in_df = [f for f in expected_features if f in df.columns]
+            missing_features = [f for f in expected_features if f not in df.columns]
+            
+            # Log diagnostic info - more frequently for debugging
+            if not hasattr(self, '_feature_log_count'):
+                self._feature_log_count = 0
+            self._feature_log_count += 1
+            
+            if self._feature_log_count % 10 == 1:  # Log every 10th call, starting with first
+                logger.info(f"[FEATURE DIAGNOSTIC] Expected: {len(expected_features)}, Available in df: {len(available_in_df)}, Missing: {len(missing_features)}")
+                if missing_features:
+                    logger.warning(f"  First 5 missing: {missing_features[:5]}")
+            
+            return expected_features
 
         # 3. Fallback to default
         default_features = get_default_feature_columns()
         return [f for f in default_features if f in df.columns]
+
+    def _fill_missing_model_features(self, df: pl.DataFrame, feature_cols: list) -> pl.DataFrame:
+        """Fill missing model features with compatibility defaults before prediction."""
+        missing_cols = [c for c in feature_cols if c not in df.columns]
+        if not missing_cols:
+            return df
+
+        exprs = []
+        for col in missing_cols:
+            # Backward compatibility: old models may still expect mtf_ema20.
+            if col == "mtf_ema20" and "close" in df.columns:
+                exprs.append(pl.col("close").alias("mtf_ema20"))
+            else:
+                exprs.append(pl.lit(0.0).alias(col))
+
+        if exprs:
+            df = df.with_columns(exprs)
+
+        return df
 
     _SIGNAL_PERSISTENCE_FILE = "data/signal_persistence.json"
 
@@ -955,6 +1067,26 @@ class TradingBot:
 
     def _get_h1_bias(self) -> str:
         try:
+            if not getattr(self, '_h1_bias_enabled', True):
+                # Keep H1 cache fresh for feature engineering, but disable H1 bias scoring/comparison.
+                df_h1 = self.mt5.get_market_data(
+                    symbol=self.config.symbol,
+                    timeframe="H1",
+                    count=1000,
+                )
+                if len(df_h1) >= 30:
+                    df_h1 = self.features.calculate_all(df_h1, include_ml_features=False)
+                    df_h1 = self.smc.calculate_all(df_h1)
+                    self._h1_df_cached = df_h1
+
+                self._h1_bias_cache = "NEUTRAL"
+                self._h1_bias_strength = "disabled"
+                self._h1_bias_score = 0.0
+                self._h1_bias_signals = {"ema_trend": 0, "ema_cross": 0, "rsi": 0, "macd": 0, "candles": 0}
+                self._h1_bias_regime_weights = "disabled"
+                self._h1_bias_loop = self._loop_count
+                return "NEUTRAL"
+
             if hasattr(self, '_h1_bias_cache') and hasattr(self, '_h1_bias_loop'):
                 if self._loop_count - self._h1_bias_loop < 4:
                     return self._h1_bias_cache
@@ -1243,7 +1375,7 @@ class TradingBot:
                     
                     is_mtf_model = False
                     if self.ml_model.feature_names:
-                        is_mtf_model = any(f.startswith("M5_") or f.startswith("M1_") for f in self.ml_model.feature_names)
+                        is_mtf_model = any(f.startswith(("M1_", "M5_", "M15_")) for f in self.ml_model.feature_names)
                     
                     if is_mtf_model and mtf_df is not None:
                         if "regime" not in mtf_df.columns:
@@ -1252,9 +1384,7 @@ class TradingBot:
                             mtf_df = mtf_df.with_columns(pl.lit(1.0).alias("regime_confidence"))
                         
                         feature_cols = self._get_available_features(mtf_df)
-                        missing_cols = [c for c in feature_cols if c not in mtf_df.columns]
-                        if missing_cols:
-                            mtf_df = mtf_df.with_columns([pl.lit(0.0).alias(c) for c in missing_cols])
+                        mtf_df = self._fill_missing_model_features(mtf_df, feature_cols)
                             
                         raw_ml_prediction = self.ml_model.predict(mtf_df, feature_cols)
                         
@@ -1267,9 +1397,7 @@ class TradingBot:
                         df_fallback = self.features.calculate_all(df_fallback, include_ml_features=True)
                         
                         feature_cols = self._get_available_features(df_fallback)
-                        missing_cols = [c for c in feature_cols if c not in df_fallback.columns]
-                        if missing_cols:
-                            df_fallback = df_fallback.with_columns([pl.lit(0.0).alias(c) for c in missing_cols])
+                        df_fallback = self._fill_missing_model_features(df_fallback, feature_cols)
                             
                         raw_ml_prediction = self.ml_model.predict(df_fallback, feature_cols)
                         
@@ -1425,8 +1553,8 @@ class TradingBot:
     def _build_wide_mtf_features(self) -> Optional[pl.DataFrame]:
         import pandas as pd
         
-        # 1. REDUCED TIMEFRAMES: Only M5 and M15
-        timeframes = ["M5", "M15"]
+        # 1. User-requested MTF set: M1, M5, M15 (no H1)
+        timeframes = ["M1", "M5", "M15"]
         live_state = {}
         
         for tf in timeframes:
@@ -1446,16 +1574,24 @@ class TradingBot:
             live_row.columns = [f"{tf}_{col}" if col != "time" else col for col in live_row.columns]
             live_state[tf] = live_row
             
-        # 2. MERGE LOGIC: Start with M5, then append M15
-        if "M5" in live_state and "M15" in live_state:
-            merged = live_state["M5"]
-            
-            # Concat M15 next to M5
-            merged = pd.concat([
-                merged.reset_index(drop=True), 
-                live_state["M15"].drop(columns=['time'], errors='ignore').reset_index(drop=True)
-            ], axis=1)
-            
+        # 2. MERGE LOGIC: Start with fastest TF available (prefer M1, then M5, then M15)
+        base_tf = None
+        for candidate in ("M1", "M5", "M15"):
+            if candidate in live_state:
+                base_tf = candidate
+                break
+
+        if base_tf is not None:
+            merged = live_state[base_tf].reset_index(drop=True)
+
+            for tf in ("M1", "M5", "M15"):
+                if tf == base_tf or tf not in live_state:
+                    continue
+                merged = pd.concat([
+                    merged,
+                    live_state[tf].drop(columns=['time'], errors='ignore').reset_index(drop=True)
+                ], axis=1)
+
             return pl.from_pandas(merged)
             
         return None
@@ -1481,10 +1617,8 @@ class TradingBot:
         df = self.features.calculate_all(df, include_ml_features=True)
         df = self.smc.calculate_all(df)
 
-        if self._h1_df_cached is None:
-            self._get_h1_bias()
-
-        df = self.fe_v2.add_all_v2_features(df, self._h1_df_cached)
+        # H1 context intentionally removed by user request.
+        df = self.fe_v2.add_all_v2_features(df, None)
 
         try:
             df = self.regime_detector.predict(df)
@@ -1539,7 +1673,7 @@ class TradingBot:
         
         is_mtf_model = False
         if self.ml_model.feature_names:
-            is_mtf_model = any(f.startswith("M5_") or f.startswith("M1_") for f in self.ml_model.feature_names)
+            is_mtf_model = any(f.startswith(("M1_", "M5_", "M15_")) for f in self.ml_model.feature_names)
             
         # 1. GENERATE RAW SIGNALS (MTF vs Single TF)
         if is_mtf_model and mtf_df is not None:
@@ -1554,17 +1688,27 @@ class TradingBot:
                 mtf_df = mtf_df.with_columns(pl.lit(reg_conf).cast(pl.Float64).alias("regime_confidence"))
                 
             feature_cols = self._get_available_features(mtf_df)
-            missing_cols = [c for c in feature_cols if c not in mtf_df.columns]
-            if missing_cols:
-                mtf_df = mtf_df.with_columns([pl.lit(0.0).alias(c) for c in missing_cols])
+            missing_before_fill = [c for c in feature_cols if c not in mtf_df.columns]
+            mtf_df = self._fill_missing_model_features(mtf_df, feature_cols)
+            
+            if not hasattr(self, '_mtf_feature_log_count'):
+                self._mtf_feature_log_count = 0
+            self._mtf_feature_log_count += 1
+            if self._mtf_feature_log_count % 5 == 1:  # Every 5th call
+                logger.info(f"[MTF PREDICT] Using {len(feature_cols)} features ({len([f for f in feature_cols if f in mtf_df.columns])} in df, {len(missing_before_fill)} auto-filled)")
                 
             raw_ml_prediction = self.ml_model.predict(mtf_df, feature_cols)
             raw_smc_signal = self.smc.generate_signal(df)
         else:
             feature_cols = self._get_available_features(df)
-            missing_cols = [c for c in feature_cols if c not in df.columns]
-            if missing_cols:
-                df = df.with_columns([pl.lit(0.0).alias(c) for c in missing_cols])
+            missing_before_fill = [c for c in feature_cols if c not in df.columns]
+            df = self._fill_missing_model_features(df, feature_cols)
+            
+            if not hasattr(self, '_single_tf_feature_log_count'):
+                self._single_tf_feature_log_count = 0
+            self._single_tf_feature_log_count += 1
+            if self._single_tf_feature_log_count % 100 == 0:
+                logger.debug(f"[SINGLE TF MODE] Features for predict: {len(feature_cols)} ({len([f for f in feature_cols if f in df.columns])} available, {len(missing_before_fill)} auto-filled)")
                 
             raw_ml_prediction = self.ml_model.predict(df, feature_cols)
             raw_smc_signal = self.smc.generate_signal(df)
@@ -1600,7 +1744,7 @@ class TradingBot:
             self._last_raw_smc_reason = ""
             self._last_raw_smc_updated = _wib_now
 
-        h1_bias = self._get_h1_bias()
+        # H1 bias comparison disabled by user request.
 
         if len(open_positions) > 0:
             if not self.simulation:
@@ -1673,12 +1817,12 @@ class TradingBot:
 
         self._current_session_multiplier = session_multiplier
         self._is_sydney_session = "Sydney" in session_reason or session_multiplier == 0.5
+        h1_bias = "NEUTRAL"
 
         if self._loop_count % 4 == 0:
             price = df["close"].tail(1).item()
-            h1_tag = f" | H1: {h1_bias}" if h1_bias != "NEUTRAL" else ""
             direction_tag = f" | Mode: {self._forced_next_direction}" if self._forced_next_direction else ""
-            logger.info(f"Price: {price:.2f} | Regime: {regime_state.regime.value if regime_state else 'N/A'} | SMC: {smc_signal.signal_type if smc_signal else 'NONE'} | ML: {ml_prediction.signal}({ml_prediction.confidence:.0%}){h1_tag}{direction_tag}")
+            logger.info(f"Price: {price:.2f} | Regime: {regime_state.regime.value if regime_state else 'N/A'} | SMC: {smc_signal.signal_type if smc_signal else 'NONE'} | ML: {ml_prediction.signal}({ml_prediction.confidence:.0%}){direction_tag}")
 
         self._last_filter_results.append({"name": "SMC Signal", "passed": smc_signal is not None, "detail": f"{smc_signal.signal_type} ({smc_signal.confidence:.0%})" if smc_signal else "No signal"})
 
@@ -1694,9 +1838,17 @@ class TradingBot:
         if signal_blocked:
             return
 
+        # Execute earlier to avoid late entries that miss the move.
+        # User rule: if total confluence > 80%, execute straight away (bypass non-critical filters).
+        fast_execute_early = final_signal is not None and final_signal.confidence > 0.80
+        if fast_execute_early:
+            logger.info(
+                f"🚀 FAST-EARLY EXECUTION: Confluence {final_signal.confidence:.0%} (>80%) - bypassing non-critical entry filters"
+            )
+
         h1_enabled = False 
         h1_passed = True  
-        h1_detail = f"H1={h1_bias}"
+        h1_detail = "H1 disabled"
         h1_penalty = 1.0
 
         if h1_enabled and final_signal is not None:
@@ -1751,10 +1903,10 @@ class TradingBot:
             "passed": not time_filter_blocked and night_spread_ok,
             "detail": f"WIB {wib_hour}" + (" BLOCKED" if time_blocked else "") + (" [DISABLED]" if not time_enabled else "") + (f" NIGHT: {night_spread_msg}" if is_night_hours else "")
         })
-        if time_filter_blocked:
+        if time_filter_blocked and not fast_execute_early:
             logger.info(f"Time Filter: {final_signal.signal_type} blocked (WIB hour {wib_hour} is skip hour)")
             return
-        if not night_spread_ok:
+        if (not night_spread_ok) and not fast_execute_early:
             logger.warning(f"Night Safety: {final_signal.signal_type} blocked - {night_spread_msg} (WIB {wib_hour})")
             return
 
@@ -1776,7 +1928,7 @@ class TradingBot:
             "detail": (f"{cooldown_remaining:.1f}s left" if cooldown_blocked else "OK") + (" [DISABLED]" if not cooldown_enabled else "")
         })
         
-        if cooldown_filter_blocked:
+        if cooldown_filter_blocked and not fast_execute_early:
             logger.info(f"Trade cooldown: {cooldown_remaining:.1f}s remaining before next trade allowed.")
             return
 
@@ -1795,7 +1947,7 @@ class TradingBot:
                 can_trade_pullback = False
                 pb_reason = f"SELL blocked: Extreme Bottom Pit (RSI: {rsi_val:.1f})"
         else:
-            can_trade_pullback, pb_reason = self._check_pullback_filter(df, final_signal.signal_type, current_price)
+            can_trade_pullback, pb_reason = self._check_pullback_filter(df, final_signal.signal_type, current_price, final_signal.confidence)
             
             # --- NEW: PEAK / BOTTOM PREVENTION (RSI & STOCH) ---
             rsi_val = df["rsi"].drop_nulls().tail(1).item() if "rsi" in df.columns else 50
@@ -1816,9 +1968,9 @@ class TradingBot:
         })
         
         # ACTUALLY BLOCK THE TRADE IF OVEREXTENDED
-        if not can_trade_pullback:
+        if not can_trade_pullback and not fast_execute_early:
             logger.info(f"🚫 Entry Filter Blocked: {pb_reason}")
-            #return
+            return
         
         mtf_passed, mtf_detail = await self._check_mtf_confluence(final_signal.signal_type)
         
@@ -1832,26 +1984,20 @@ class TradingBot:
             "detail": mtf_detail + " [IGNORED]"
         })
         
-        if not mtf_passed:
-            # Changed from WARNING to INFO, and removed the 'return'
-            # Now the bot will take the trade even if the higher timeframes lag!
-            logger.info(f"MTF warning ignored: {mtf_detail}")
+        if not mtf_passed and not fast_execute_early:
+            logger.info(f"MTF blocked: {mtf_detail}")
+            return
 
         # --- 3. EXHAUSTION / BORDER FILTER (RSI) ---
         if df is not None and "rsi" in df.columns and not getattr(self, '_always_invert', False):
             current_rsi = df["rsi"].tail(1).item()
             if current_rsi is not None:
-                # Do not BUY if the market is already at the ceiling (>70 RSI)
                 if final_signal.signal_type == "BUY" and current_rsi > 70:
-                    logger.warning(f"🚫 BUY blocked: RSI is {current_rsi:.1f} (Overbought). Market is at the ceiling!")
-                    self._last_filter_results.append({"name": "Border Filter", "passed": False, "detail": f"RSI {current_rsi:.1f} > 70"})
-                    #return  # Stops execution
-                
-                # Do not SELL if the market is already at the floor (<30 RSI)
+                    logger.info(f"⚠️ BUY allowed despite RSI {current_rsi:.1f} (strong SMC/ML setup).")
+                    self._last_filter_results.append({"name": "Border Filter", "passed": True, "detail": f"RSI {current_rsi:.1f} > 70 [ALLOW]"})
                 elif final_signal.signal_type == "SELL" and current_rsi < 30:
-                    logger.warning(f"🚫 SELL blocked: RSI is {current_rsi:.1f} (Oversold). Market is at the floor!")
-                    self._last_filter_results.append({"name": "Border Filter", "passed": False, "detail": f"RSI {current_rsi:.1f} < 30"})
-                    #return  # Stops execution
+                    logger.info(f"⚠️ SELL allowed despite RSI {current_rsi:.1f} (strong SMC/ML setup).")
+                    self._last_filter_results.append({"name": "Border Filter", "passed": True, "detail": f"RSI {current_rsi:.1f} < 30 [ALLOW]"})
 
         self.smart_risk.check_new_day()
         risk_rec = self.smart_risk.get_trading_recommendation()
@@ -1869,7 +2015,11 @@ class TradingBot:
             ml_confidence=ml_prediction.confidence,  
         )
 
-        if safe_lot <= 0:
+        # === APPLY PYRAMID SCALING ===
+        # Scale lot size based on existing open positions (pyramiding strategy)
+        pyramided_lot = self._calculate_pyramided_lot_size(safe_lot, final_signal.signal_type)
+        
+        if pyramided_lot <= 0:
             logger.debug("Smart Risk: Lot size is 0 (Trade Rejected) - skipping trade")
             return
 
@@ -1879,38 +2029,32 @@ class TradingBot:
         is_inverted = getattr(self, '_always_invert', False)
         
         if is_inverted:
-            # INVERTED/MOMENTUM LOGIC: Buy Green (Breakouts), Sell Red (Breakdowns)
             if target_direction == "BUY" and current_price < current_open:
-                logger.info(f"🚫 Candle Behavior (Inverted): BUY blocked - Candle is RED (Wait for green momentum). Open: {current_open:.2f}, Price: {current_price:.2f}")
-                #return
+                logger.info(f"⚠️ Candle Behavior (Inverted): BUY allowed despite RED candle. Open: {current_open:.2f}, Price: {current_price:.2f}")
             elif target_direction == "SELL" and current_price > current_open:
-                logger.info(f"🚫 Candle Behavior (Inverted): SELL blocked - Candle is GREEN (Wait for red momentum). Open: {current_open:.2f}, Price: {current_price:.2f}")
-                #return
+                logger.info(f"⚠️ Candle Behavior (Inverted): SELL allowed despite GREEN candle. Open: {current_open:.2f}, Price: {current_price:.2f}")
         else:
-            # STANDARD MEAN-REVERSION: Buy Red (Dips), Sell Green (Peaks)
             if target_direction == "BUY" and current_price > current_open:
-                logger.info(f"🚫 Candle Behavior: BUY blocked - Candle is currently GREEN (Wait for a dip/red candle). Open: {current_open:.2f}, Price: {current_price:.2f}")
-                #return
+                logger.info(f"⚠️ Candle Behavior: BUY allowed despite GREEN candle. Open: {current_open:.2f}, Price: {current_price:.2f}")
             elif target_direction == "SELL" and current_price < current_open:
-                logger.info(f"🚫 Candle Behavior: SELL blocked - Candle is currently RED (Wait for a rally/green candle). Open: {current_open:.2f}, Price: {current_price:.2f}")
-                #return
+                logger.info(f"⚠️ Candle Behavior: SELL allowed despite RED candle. Open: {current_open:.2f}, Price: {current_price:.2f}")
 
         session_mult = getattr(self, '_current_session_multiplier', 1.0)
         if session_mult < 1.0:
-            original_lot = safe_lot
-            safe_lot = max(0.01, round(safe_lot * session_mult, 2))  
+            original_lot = pyramided_lot
+            pyramided_lot = max(0.01, round(pyramided_lot * session_mult, 2))  
             sydney_mode = getattr(self, '_is_sydney_session', False)
             if sydney_mode:
-                logger.info(f"Sydney SAFE MODE: Lot {original_lot:.2f} -> {safe_lot:.2f} (0.5x)")
+                logger.info(f"Sydney SAFE MODE: Lot {original_lot:.2f} -> {pyramided_lot:.2f} (0.5x)")
 
         wib_hour = datetime.now(ZoneInfo("Asia/Kuala_Lumpur")).hour
         is_night_hours = wib_hour >= 22 or wib_hour <= 5
         if is_night_hours:
-            original_lot = safe_lot
-            safe_lot = max(0.01, round(safe_lot * 0.5, 2))  
-            logger.warning(f"NIGHT SAFETY MODE: Lot {original_lot:.2f} -> {safe_lot:.2f} (0.5x) - WIB {wib_hour}:xx")
+            original_lot = pyramided_lot
+            pyramided_lot = max(0.01, round(pyramided_lot * 0.5, 2))  
+            logger.warning(f"NIGHT SAFETY MODE: Lot {original_lot:.2f} -> {pyramided_lot:.2f} (0.5x) - WIB {wib_hour}:xx")
             
-        # safe_lot = 0.01
+        # pyramided_lot = 0.01
 
         from dataclasses import dataclass
 
@@ -1921,19 +2065,36 @@ class TradingBot:
             risk_percent: float
 
         sl_distance = abs(final_signal.entry_price - final_signal.stop_loss)
-        risk_amount = safe_lot * sl_distance * 10  
+        risk_amount = pyramided_lot * sl_distance * 10  
         risk_percent = (risk_amount / account_balance) * 100
 
         position_result = SafePosition(
-            lot_size=safe_lot,
+            lot_size=pyramided_lot,
             risk_amount=risk_amount,
             risk_percent=risk_percent,
         )
 
         logger.info(f"Smart Risk: Lot={safe_lot}, Risk=${risk_amount:.2f} ({risk_percent:.2f}%), Mode={risk_rec['mode']}")
 
-        can_open, limit_reason = self.smart_risk.can_open_position()
+        burst_entry_cap = min(self._burst_same_direction_cap, self._burst_hard_cap)
+        if self._burst_enabled:
+            can_open, limit_reason = self.smart_risk.can_open_position(
+                open_positions=open_positions,
+                direction=final_signal.signal_type,
+                allow_same_direction_add=True,
+                same_direction_limit=burst_entry_cap,
+                custom_max_positions=self._burst_hard_cap,
+            )
+        else:
+            can_open, limit_reason = self.smart_risk.can_open_position(
+                open_positions=open_positions,
+                direction=final_signal.signal_type,
+            )
         self._last_filter_results.append({"name": "Position Limit", "passed": can_open, "detail": limit_reason if not can_open else "OK"})
+
+        if not can_open:
+            logger.warning(f"Entry blocked by position guard: {limit_reason}")
+            return
 
         # --- BULLETPROOF HEDGING & STACKING PREVENTION ---
         opposite_dir_count = 0
@@ -1949,24 +2110,30 @@ class TradingBot:
             else:
                 opposite_dir_count += 1
 
-        # 1. Prevent Hedging (Mixed Buy/Sell)
+        # 1. Prevent Hedging (Mixed Buy/Sell) - BUT ALLOW HIGH-CONFIDENCE OVERRIDES
+        # FIX: Allow opposite trades if both SMC and ML agree VERY STRONGLY (78%+)
+        confluence_confidence = final_signal.confidence  # This is already merged confidence
+        
         if opposite_dir_count > 0:
-            logger.warning(f"Hedging Prevention: Already holding opposite trades. Skipping {final_signal.signal_type} entry until cleared.")
-            return
+            # EXCEPTION: Allow opposite entry if VERY HIGH confidence (78%+) and SMC + ML both agree
+            has_high_confluence = confluence_confidence >= 0.78
+            has_smc_signal = final_signal.smc_confidence >= 0.78 if hasattr(final_signal, 'smc_confidence') else False
+            
+            if not (has_high_confluence and has_smc_signal):
+                logger.warning(f"Hedging Prevention: Already holding {opposite_dir_count} opposite trades. "
+                              f"Skipping {final_signal.signal_type} entry (confidence: {confluence_confidence:.2%}). "
+                              f"Use 78%+ confluence to override.")
+                return
+            else:
+                logger.info(f"🔥 HIGH-CONFIDENCE OVERRIDE: {final_signal.signal_type} allowed despite {opposite_dir_count} "
+                           f"opposite positions (Confluence: {confluence_confidence:.2%})")
             
         # 2. Prevent Over-Stacking (Pyramiding Limit)
-        if same_dir_count >= self.smart_risk.max_concurrent_positions:
-            logger.warning(f"Stacking Prevention: Max positions ({self.smart_risk.max_concurrent_positions}) reached for {final_signal.signal_type}. Skipping new entry.")
+        stack_cap = burst_entry_cap if self._burst_enabled else self.smart_risk.max_concurrent_positions
+        if same_dir_count >= stack_cap:
+            logger.warning(f"Stacking Prevention: Max positions ({stack_cap}) reached for {final_signal.signal_type}. Skipping new entry.")
             return
         # -------------------------------------------------
-
-        current_type = 0 if final_signal.signal_type == "BUY" else 1
-        same_dir_count = sum(1 for p in open_positions.iter_rows(named=True) if p.get("type", -1) == current_type)
-        
-        # Allow multiple trades up to max limit (for pyramiding)
-        if same_dir_count >= self.smart_risk.max_concurrent_positions:
-            logger.warning(f"Stacking Prevention: Max positions ({self.smart_risk.max_concurrent_positions}) reached for {final_signal.signal_type}. Skipping new entry.")
-            return  
 
         # REMOVE OR COMMENT OUT THIS LINE:
         # await self._execute_trade_safe(final_signal, position_result, regime_state)
@@ -2046,76 +2213,92 @@ class TradingBot:
                     f"Confidence penalty 10% (whipsaw risk)"
                 )
 
+        # User request: disable AI override completely.
+        # Only SMC+AI confluence entries are allowed.
         needs_override = smc_signal is None or smc_signal.signal_type != ml_prediction.signal
-
-        if ml_prediction.signal in ["BUY", "SELL"] and ml_prediction.confidence >= 0.85 and needs_override:
-            direction = ml_prediction.signal
-            
-            atr = 15.0
-            if cached_df is not None and "atr" in cached_df.columns:
-                val = cached_df["atr"].drop_nulls().tail(1).item()
-                if val and val > 0:
-                    atr = val
-            
-            if tick:
-                entry_price = tick.ask if direction == "BUY" else tick.bid
-                
-                sl_dist = atr * 2.0
-                tp_dist = atr * 3.0
-                
-                if direction == "BUY":
-                    sl, tp = entry_price - sl_dist, entry_price + tp_dist
-                else:
-                    sl, tp = entry_price + sl_dist, entry_price - tp_dist
-                    
-                logger.info(f"🤖 AI GENIUS OVERRIDE: Forcing {direction} trade! (ML Confidence: {ml_prediction.confidence:.0%})")
-                
-                return SMCSignal(
-                    signal_type=direction,
-                    entry_price=entry_price,
-                    stop_loss=sl,
-                    take_profit=tp,
-                    confidence=ml_prediction.confidence,
-                    reason=f"AI OVERRIDE: ML highly confident ({ml_prediction.confidence:.0%})",
+        if needs_override:
+            if smc_signal is not None and ml_prediction.signal in ["BUY", "SELL"]:
+                logger.warning(
+                    f"🚫 STRICT CONFLUENCE BLOCK: SMC={smc_signal.signal_type}({smc_signal.confidence:.0%}) "
+                    f"vs AI={ml_prediction.signal}({ml_prediction.confidence:.0%})"
                 )
+            return None
 
         golden_marker = "[GOLDEN] " if is_golden_time else ""
         if smc_signal is not None:
             smc_conf = smc_signal.confidence
 
-            if smc_conf < 0.55:
+            if smc_conf < 0.60:
                 if self._loop_count % 120 == 0:
-                    logger.info(f"[SMC LOW] {smc_signal.signal_type} confidence {smc_conf:.0%} < 55% -> Skip")
+                    logger.info(f"[SMC LOW] {smc_signal.signal_type} confidence {smc_conf:.0%} < 60% -> Skip")
                 return None
 
             prob = ml_prediction.probability
             ai_conf = ml_prediction.confidence if ml_prediction.confidence >= 0.5 else max(prob, 1.0 - prob)
             ai_signal = ml_prediction.signal
-            
-            # --- STRICT ALIGNMENT BLOCK: AI IS THE MASTER ---
-            if ai_conf >= 0.515 and ai_signal != smc_signal.signal_type:
-                logger.warning(f"🚫 AI VETO: SMC wants to {smc_signal.signal_type}, but AI macro-trend is {ai_signal} ({ai_conf:.0%}). Trade cancelled to prevent trap.")
+
+            # HOLD is not treated as a hard block anymore. If the model is near the edge,
+            # the confluence and confidence rules will decide whether a live entry is still valid.
+            if ai_signal not in ["BUY", "SELL", "HOLD"]:
+                logger.warning(f"🚫 AI UNKNOWN SIGNAL: {ai_signal}. Trade skipped.")
                 return None
-                
-            # --- CONFLUENCE LOGIC ---
-            if ai_conf >= 0.515 and smc_signal.signal_type == ai_signal:
-                combined_confidence = max(smc_conf, ai_conf)
-                reason_suffix = f" | AI & SMC AGREE ({ai_conf:.0%})"
-                logger.info(f"✅ CONFLUENCE: Both agree on {ai_signal} (SMC {smc_conf:.0%}, AI {ai_conf:.0%})")
-            else:
-                # ==========================================================
-                # FALLBACK: IF AI IS UNSURE, TRUST STRONG SMC SETUPS
-                # ==========================================================
-                if smc_conf >= 0.70:
-                    combined_confidence = smc_conf
-                    reason_suffix = f" | AI NEUTRAL ({ai_conf:.1%}) -> Trusting SMC"
-                    logger.info(f"⚠️ AI Neutral, but SMC confidence is strong ({smc_conf:.0%}). Executing to gather data.")
-                else:
-                    logger.warning(f"🚫 AI VETO: AI confidence is too low ({ai_conf:.0%}) and SMC is weak. Skipping.")
-                    return None
+
+            if ai_signal == "HOLD":
+                logger.info(
+                    f"ℹ️ AI/ML is HOLD at {ai_conf:.0%}; using confluence rules to decide whether to continue."
+                )
+
+            if ai_signal != "HOLD" and ai_signal != smc_signal.signal_type:
+                logger.warning(f"🚫 AI VETO: SMC wants to {smc_signal.signal_type}, but AI is {ai_signal} ({ai_conf:.0%}). Trade cancelled to prevent trap.")
+                return None
+
+            total_conf = (smc_conf + ai_conf) / 2.0
+
+            confluence_ok, confluence_reason = evaluate_confluence_rule(
+                smc_confidence=smc_conf,
+                ai_confidence=ai_conf,
+                ai_signal=ai_signal,
+                smc_signal_type=smc_signal.signal_type,
+            )
+            if not confluence_ok:
+                logger.warning(
+                    f"🚫 STRICT CONFLUENCE BLOCK: Total {total_conf:.0%}, AI {ai_conf:.0%}, SMC {smc_conf:.0%}. {confluence_reason}"
+                )
+                return None
+
+            execution_rule_passed = True
+            combined_confidence = total_conf
+            
+            # Additional filter: Skip high-volatility trades (regime awareness)
+            current_regime = getattr(self, '_current_regime', 'medium_volatility')
+            if current_regime == 'high_volatility' and min(smc_conf, ai_conf) < 0.70:
+                logger.warning(f"🚫 HIGH VOLATILITY SKIP: Regime is high-volatility. Need BOTH ≥70% to trade. Got SMC {smc_conf:.0%}, AI {ai_conf:.0%}.")
+                return None
+            
+            logger.info(
+                f"🏆 EXECUTION RULE: PASSED ({confluence_reason})"
+            )
+            if combined_confidence > 0.80:
+                logger.info("🚀 DIRECT EXECUTION RULE: Total confluence > 80%")
+
+            entry_allowed, entry_reason = self.smart_risk.should_allow_entry(
+                smc_confidence=smc_conf,
+                ai_confidence=ai_conf,
+                regime=regime_state.regime.value if regime_state else "normal",
+                dynamic_threshold=getattr(self, "_last_dynamic_threshold", 0.75),
+                market_quality=getattr(self, "_last_market_quality", "average"),
+            )
+            if not entry_allowed and not execution_rule_passed:
+                logger.warning(f"🚫 ENTRY BLOCKED: {entry_reason}")
+                return None
+            elif not entry_allowed and execution_rule_passed:
+                logger.info(f"⚠️ ENTRY FILTER OVERRIDDEN BY EXECUTION RULE: {entry_reason}")
+
+            reason_suffix = f" | AI & SMC AGREE ({ai_conf:.0%})"
+            logger.info(f"✅ CONFLUENCE: Both agree on {ai_signal} (SMC {smc_conf:.0%}, AI {ai_conf:.0%}, Total {combined_confidence:.0%})")
 
             logger.info(
-                f"{golden_marker}[AI APPROVED] {smc_signal.signal_type} @ {smc_signal.entry_price:.2f} "  
+                f"{golden_marker}[AI APPROVED] {smc_signal.signal_type} @ {smc_signal.entry_price:.2f} "
                 f"(SMC={smc_conf:.0%}, ML={ml_prediction.signal} {ml_prediction.confidence:.0%}, "
                 f"Final={combined_confidence:.0%})"
             )
@@ -2137,11 +2320,13 @@ class TradingBot:
         df: pl.DataFrame,
         signal_direction: str,
         current_price: float,
+        signal_confidence: float = 0.70,
     ) -> Tuple[bool, str]:
         """
         Check if price is in a safe entry zone.
         Forces the bot to buy red candles (dips) and sell green candles (rallies).
         Prevents buying falling knives and parabolic overextensions (Rubber Band effect).
+        High-confidence signals (75%+) can override macro trend blocks.
         """
         try:
             recent_5 = df.tail(5)
@@ -2163,7 +2348,7 @@ class TradingBot:
             current_close = recent_5["close"].to_list()[-1]
             current_candle_size = current_close - current_open
             
-            surge_limit = atr * 0.30
+            surge_limit = atr * 0.50  # Allow up to 50% of ATR drop (was 30%, too strict)
             
             # --- NEW: MACRO TREND SHIELD (50-Period Baseline) ---
             # Calculates the moving average of the last 50 candles to find the real trend
@@ -2179,10 +2364,13 @@ class TradingBot:
             recent_ceiling = max(recent_20["high"].to_list())
 
             if signal_direction == "BUY":  
-                # 0. NEW: MACRO TREND BLOCK
+                # 0. NEW: MACRO TREND BLOCK (can be overridden by 75%+ confidence)
                 # If price is significantly below the 50-period average, DO NOT catch the falling knife!
                 if current_price < macro_baseline - (atr * 0.5):
-                    return False, f"BUY blocked: Macro trend is BEARISH (${(macro_baseline - current_price):.2f} below 50-MA). Do not buy the crash."
+                    if signal_confidence >= 0.75:
+                        logger.info(f"BUY macro override: Price ${(macro_baseline - current_price):.2f} below 50-MA but ALLOWED (AI confidence {signal_confidence:.0%} >= 75%)")
+                    else:
+                        return False, f"BUY blocked: Macro trend is BEARISH (${(macro_baseline - current_price):.2f} below 50-MA). Do not buy the crash."
 
                 # 1. Block FOMO (Buying a green candle)
                 if current_candle_size > 0:
@@ -2193,8 +2381,8 @@ class TradingBot:
                     return False, f"BUY blocked: Candle is crashing hard RED (${current_candle_size:.2f}). Unsafe to buy."
                 
                 # 3. Block Parabolic Overextension (The Mount Everest Trap)
-                # If price is stretched more than 2.5x ATR from the floor, do NOT buy the top!
-                if current_price > recent_floor + (atr * 2.5):
+                # If price is stretched more than 3.5x ATR from the floor, do NOT buy the top!
+                if current_price > recent_floor + (atr * 3.5):
                     return False, f"BUY blocked: Parabolic Overextension. Price is +${(current_price - recent_floor):.2f} above recent floor. Wait for crash."
 
                 # 4. Block Structural Breaks
@@ -2207,10 +2395,13 @@ class TradingBot:
                 return True, "BUY OK: Safe red dip detected."
 
             elif signal_direction == "SELL":  
-                # 0. NEW: MACRO TREND BLOCK
+                # 0. NEW: MACRO TREND BLOCK (can be overridden by 75%+ confidence)
                 # If price is significantly above the 50-period average, DO NOT step in front of the train!
                 if current_price > macro_baseline + (atr * 0.5):
-                    return False, f"SELL blocked: Macro trend is BULLISH (+${(current_price - macro_baseline):.2f} above 50-MA). Do not sell the rally."
+                    if signal_confidence >= 0.75:
+                        logger.info(f"SELL macro override: Price ${(current_price - macro_baseline):.2f} above 50-MA but ALLOWED (AI confidence {signal_confidence:.0%} >= 75%)")
+                    else:
+                        return False, f"SELL blocked: Macro trend is BULLISH (+${(current_price - macro_baseline):.2f} above 50-MA). Do not sell the rally."
 
                 # 1. Block FOMO (Selling a red candle)
                 if current_candle_size < 0:
@@ -2221,8 +2412,8 @@ class TradingBot:
                     return False, f"SELL blocked: Candle is surging hard GREEN (+${current_candle_size:.2f}). Unsafe to sell."
                     
                 # 3. Block Parabolic Overextension (The Bottomless Pit Trap)
-                # If price is stretched more than 2.5x ATR from the ceiling, do NOT sell the bottom!
-                if current_price < recent_ceiling - (atr * 2.5):
+                # If price is stretched more than 3.5x ATR from the ceiling, do NOT sell the bottom!
+                if current_price < recent_ceiling - (atr * 3.5):
                     return False, f"SELL blocked: Parabolic Overextension. Price is -${(recent_ceiling - current_price):.2f} below recent peak. Wait for bounce."
                 
                 # 4. Block Structural Breaks
@@ -2289,6 +2480,7 @@ class TradingBot:
                 entry_price=entry_price_actual,  
                 lot_size=lot_size_actual,        
                 direction=signal.signal_type,
+                take_profit=signal.take_profit,
             )
 
             regime = self._last_regime.value if hasattr(self, '_last_regime') else "unknown"
@@ -2371,117 +2563,261 @@ class TradingBot:
             logger.error(f"Order failed: {result.comment} (code: {result.retcode})")
 
     async def _verify_and_execute_delayed(self, original_signal, position_result, original_regime_state):
-        """Waits 5/  seconds and re-evaluates the trend before executing."""
+        """Executes immediately (no 1s verification delay)."""
         self._is_verifying_trade = True
-        logger.info(f"⏳ Trade signal found ({original_signal.signal_type}). Waiting 1 seconds to confirm trend...")
+        logger.info(f"⚡ Trade signal found ({original_signal.signal_type}). Executing without 1s verification.")
         
         try:
-            await asyncio.sleep(1)
-            
-            # Fetch latest data to confirm trend
-            df_check = self.mt5.get_market_data(
-                symbol=self.config.symbol,
-                timeframe=self.config.execution_timeframe,
-                count=1000,
-            )
-            
-            if len(df_check) == 0:
-                logger.warning("Failed to fetch data for 1s verification. Cancelling  trade.")
-                return
-                
-            df_check = self.features.calculate_all(df_check, include_ml_features=True)
-            df_check = self.smc.calculate_all(df_check)
-            
-            # Re-run ML Prediction exactly as done in the main loop
-            mtf_df = self._build_wide_mtf_features()
-            is_mtf_model = False
-            if self.ml_model.feature_names:
-                is_mtf_model = any(f.startswith("M5_") or f.startswith("M1_") for f in self.ml_model.feature_names)
-                
-            if is_mtf_model and mtf_df is not None:
-                if "regime" not in mtf_df.columns:
-                    reg_map = {"low_volatility": 0, "medium_volatility": 1, "high_volatility": 2, "crisis": 3}
-                    reg_str = original_regime_state.regime.value if original_regime_state else "medium_volatility"
-                    mtf_df = mtf_df.with_columns(pl.lit(reg_map.get(reg_str, 1)).cast(pl.Int32).alias("regime"))
-                if "regime_confidence" not in mtf_df.columns:
-                    reg_conf = original_regime_state.confidence if original_regime_state else 1.0
-                    mtf_df = mtf_df.with_columns(pl.lit(reg_conf).cast(pl.Float64).alias("regime_confidence"))
-                    
-                feature_cols = self._get_available_features(mtf_df)
-                missing_cols = [c for c in feature_cols if c not in mtf_df.columns]
-                if missing_cols:
-                    mtf_df = mtf_df.with_columns([pl.lit(0.0).alias(c) for c in missing_cols])
-                    
-                raw_ml = self.ml_model.predict(mtf_df, feature_cols)
-            else:
-                feature_cols = self._get_available_features(df_check)
-                missing_cols = [c for c in feature_cols if c not in df_check.columns]
-                if missing_cols:
-                    df_check = df_check.with_columns([pl.lit(0.0).alias(c) for c in missing_cols])
-                raw_ml = self.ml_model.predict(df_check, feature_cols)
-                
-            raw_smc = self.smc.generate_signal(df_check)
-            
-            # NORMAL MODE (1s check)
-            if getattr(self, '_always_invert', False):
-                ml_pred = self._invert_ml_prediction(raw_ml)
-                smc_sig = self._invert_smc_signal(raw_smc) if raw_smc else None
-            else:
-                ml_pred = raw_ml
-                smc_sig = raw_smc
-                
-            # --- UPDATED VERIFICATION STEP ---
-            # Pass the new signals back through your combination logic so it respects the "Neutral AI / Strong SMC" rules
-            new_final_signal = self._combine_signals(smc_sig, ml_pred, original_regime_state)
-
-            if new_final_signal is None or new_final_signal.signal_type != original_signal.signal_type:
-                logger.warning(f"❌ 1s Verification Failed! Trend weakened or reversed. Trade cancelled.")
-                return
-                
-            # ---> NEW: RE-CHECK FOMO & PULLBACK AFTER SLEEPING <---
-            current_open = df_check["open"].tail(1).item()
-            current_price_check = df_check["close"].tail(1).item()
-            
-            # 1. Re-check Candle Behavior (Don't buy if the candle became a massive green spike while sleeping)
-            if new_final_signal.signal_type == "BUY" and current_price_check > current_open:
-                logger.warning(f"❌ 1s Verification Failed! Candle surged GREEN during wait. Avoiding FOMO peak. Cancelling trade.")
-                return
-            elif new_final_signal.signal_type == "SELL" and current_price_check < current_open:
-                logger.warning(f"❌ 1s Verification Failed! Candle dumped RED during wait. Avoiding FOMO bottom. Cancelling trade.")
-                return
-                
-            # 2. Re-check Pullback Filter (Ensure it hasn't turned into a falling knife)
-            can_trade_pb, pb_reason = self._check_pullback_filter(df_check, new_final_signal.signal_type, current_price_check)
-            if not can_trade_pb:
-                logger.warning(f"❌ 1s Verification Failed! Market overextended during wait: {pb_reason}. Cancelling trade.")
-                return
-            # --------------------------------------------------------
-
-            # If everything is still aligned and safe, execute!
-            logger.info(f"✅ 1s Verification Passed! Trend is still {original_signal.signal_type}. Preparing burst execution...")
-            
-            # Update entry price to the exact newest tick
+            # Refresh entry price right before execution.
             tick = self.mt5.get_tick(self.config.symbol)
             if tick:
                 original_signal.entry_price = tick.ask if original_signal.signal_type == "BUY" else tick.bid
 
-            # Check exactly how many slots we have left to reach the max limit
-            open_positions = self.mt5.get_open_positions(self.config.symbol, self.config.magic_number)
-            current_type = 0 if original_signal.signal_type == "BUY" else 1
-            same_dir_count = 0
-            if open_positions is not None and not open_positions.is_empty():
-                same_dir_count = sum(1 for p in open_positions.iter_rows(named=True) if p.get("type", -1) == current_type)
-            
-            trades_to_fire = self.smart_risk.max_concurrent_positions - same_dir_count
-            
-            # Fire all remaining trades instantly in a quick loop
-            if trades_to_fire > 0:
-                logger.info(f"🚀 BURST MODE: Firing {trades_to_fire} trades of {position_result.lot_size} instantly!")
-                for _ in range(trades_to_fire):
-                    await self._execute_trade_safe(original_signal, position_result, original_regime_state)
-                    await asyncio.sleep(0.1) # 100ms delay to prevent MT5 "Too Many Requests" broker block
-            else:
-                logger.info("Stacking Limit Reached: No burst trades fired.")
+            # If everything is still aligned and safe, execute burst mode:
+            # keep firing 0.01 orders while approval remains valid and capacity remains.
+            if not self._burst_enabled:
+                logger.info("✅ Burst disabled, firing single order.")
+                await self._execute_trade_safe(original_signal, position_result, original_regime_state)
+                return
+
+            burst_started = datetime.now()
+            burst_orders = 0
+            burst_cycles_done = 0
+            is_ai_override = str(getattr(original_signal, "reason", "")).startswith("AI OVERRIDE")
+            max_burst_cycles = 1 if is_ai_override else self._burst_cycles
+            max_burst_orders = max_burst_cycles * self._burst_batch_size
+
+            logger.info(
+                f"✅ Starting BURST mode: "
+                f"lot={self._burst_lot_size:.2f}, interval={self._burst_check_interval_seconds:.1f}s, "
+                f"window={self._burst_window_seconds}s, cycles={max_burst_cycles}, "
+                f"batch={self._burst_batch_size}, max={max_burst_orders}, "
+                f"force_fill={self._burst_force_fill_max}"
+            )
+
+            while True:
+                elapsed = (datetime.now() - burst_started).total_seconds()
+                if (not self._burst_force_fill_max) and elapsed > self._burst_window_seconds:
+                    logger.info(f"BURST stopped: window expired ({elapsed:.1f}s)")
+                    break
+
+                if burst_orders >= max_burst_orders:
+                    logger.info(f"BURST stopped: max burst count reached ({burst_orders}/{max_burst_orders})")
+                    break
+
+                if burst_cycles_done >= max_burst_cycles:
+                    logger.info(f"BURST stopped: cycle count reached ({burst_cycles_done}/{max_burst_cycles})")
+                    break
+
+                # Capacity/guard checks on each cycle.
+                open_positions = self.mt5.get_open_positions(self.config.symbol, self.config.magic_number)
+                current_type = 0 if original_signal.signal_type == "BUY" else 1
+                same_dir_count = 0
+                opposite_dir_count = 0
+
+                if open_positions is not None and not open_positions.is_empty():
+                    for p in open_positions.iter_rows(named=True):
+                        p_type = p.get("type", -1)
+                        if p_type == current_type:
+                            same_dir_count += 1
+                        elif p_type in (0, 1):
+                            opposite_dir_count += 1
+
+                if same_dir_count >= self._burst_same_direction_cap:
+                    logger.info(
+                        f"BURST stopped: position max reached "
+                        f"({same_dir_count}/{self._burst_same_direction_cap})"
+                    )
+                    break
+
+                can_open, limit_reason = self.smart_risk.can_open_position(
+                    open_positions=open_positions,
+                    direction=original_signal.signal_type,
+                    allow_same_direction_add=True,
+                    same_direction_limit=self._burst_same_direction_cap,
+                    custom_max_positions=self._burst_hard_cap,
+                )
+                if not can_open:
+                    logger.info(f"BURST stopped: can_open_position blocked ({limit_reason})")
+                    break
+
+                if opposite_dir_count > 0:
+                    logger.info(
+                        f"BURST stopped: opposite-direction positions detected ({opposite_dir_count})"
+                    )
+                    break
+
+                active_positions = len(open_positions) if open_positions is not None else 0
+                remaining_same_dir = max(0, self._burst_same_direction_cap - same_dir_count)
+                remaining_total = max(0, self._burst_hard_cap - active_positions)
+                remaining_target = max(0, max_burst_orders - burst_orders)
+                orders_this_cycle = min(
+                    self._burst_batch_size,
+                    remaining_same_dir,
+                    remaining_total,
+                    remaining_target,
+                )
+
+                if orders_this_cycle <= 0:
+                    logger.info(
+                        "BURST stopped: no capacity left for this cycle "
+                        f"(same_dir_left={remaining_same_dir}, total_left={remaining_total}, target_left={remaining_target})"
+                    )
+                    break
+
+                # Optional re-check path: disabled in force-fill mode.
+                df_burst = self.mt5.get_market_data(
+                    symbol=self.config.symbol,
+                    timeframe=self.config.execution_timeframe,
+                    count=1000,
+                )
+                if len(df_burst) == 0:
+                    logger.warning("BURST pause: no market data during approval re-check")
+                    await asyncio.sleep(self._burst_check_interval_seconds)
+                    continue
+
+                df_burst = self.features.calculate_all(df_burst, include_ml_features=True)
+                df_burst = self.smc.calculate_all(df_burst)
+
+                mtf_df = self._build_wide_mtf_features()
+                is_mtf_model = False
+                if self.ml_model.feature_names:
+                    is_mtf_model = any(f.startswith(("M1_", "M5_", "M15_")) for f in self.ml_model.feature_names)
+
+                if is_mtf_model and mtf_df is not None:
+                    if "regime" not in mtf_df.columns:
+                        reg_map = {"low_volatility": 0, "medium_volatility": 1, "high_volatility": 2, "crisis": 3}
+                        reg_str = original_regime_state.regime.value if original_regime_state else "medium_volatility"
+                        mtf_df = mtf_df.with_columns(pl.lit(reg_map.get(reg_str, 1)).cast(pl.Int32).alias("regime"))
+                    if "regime_confidence" not in mtf_df.columns:
+                        reg_conf = original_regime_state.confidence if original_regime_state else 1.0
+                        mtf_df = mtf_df.with_columns(pl.lit(reg_conf).cast(pl.Float64).alias("regime_confidence"))
+
+                    feature_cols = self._get_available_features(mtf_df)
+                    mtf_df = self._fill_missing_model_features(mtf_df, feature_cols)
+
+                    raw_ml_burst = self.ml_model.predict(mtf_df, feature_cols)
+                else:
+                    feature_cols = self._get_available_features(df_burst)
+                    df_burst = self._fill_missing_model_features(df_burst, feature_cols)
+                    raw_ml_burst = self.ml_model.predict(df_burst, feature_cols)
+
+                raw_smc_burst = self.smc.generate_signal(df_burst)
+
+                if getattr(self, '_always_invert', False):
+                    ml_burst = self._invert_ml_prediction(raw_ml_burst)
+                    smc_burst = self._invert_smc_signal(raw_smc_burst) if raw_smc_burst else None
+                else:
+                    ml_burst = raw_ml_burst
+                    smc_burst = raw_smc_burst
+
+                if self._burst_force_fill_max:
+                    final_burst_signal = original_signal
+                else:
+                    final_burst_signal = self._combine_signals(smc_burst, ml_burst, original_regime_state)
+                    if final_burst_signal is None or final_burst_signal.signal_type != original_signal.signal_type:
+                        logger.info("BURST pause: approval lost (signal changed or invalid), waiting for re-approval")
+                        await asyncio.sleep(self._burst_check_interval_seconds)
+                        continue
+
+                burst_open = df_burst["open"].tail(1).item()
+                burst_close = df_burst["close"].tail(1).item()
+
+                # Final sanity check: do not force-fill if the latest candle has already
+                # flipped against the intended direction. This prevents late entries.
+                if self._burst_force_fill_max:
+                    if final_burst_signal.signal_type == "BUY" and burst_close < burst_open:
+                        logger.info(
+                            f"BURST pause: BUY lost momentum at execution (open={burst_open:.2f}, close={burst_close:.2f})"
+                        )
+                        await asyncio.sleep(self._burst_check_interval_seconds)
+                        continue
+                    if final_burst_signal.signal_type == "SELL" and burst_close > burst_open:
+                        logger.info(
+                            f"BURST pause: SELL lost momentum at execution (open={burst_open:.2f}, close={burst_close:.2f})"
+                        )
+                        await asyncio.sleep(self._burst_check_interval_seconds)
+                        continue
+
+                if not self._burst_force_fill_max:
+                    can_trade_pb, pb_reason = self._check_pullback_filter(
+                        df_burst,
+                        final_burst_signal.signal_type,
+                        burst_close,
+                        final_burst_signal.confidence,
+                    )
+                    if not can_trade_pb:
+                        logger.info(f"BURST pause: pullback filter blocked ({pb_reason})")
+                        await asyncio.sleep(self._burst_check_interval_seconds)
+                        continue
+
+                tick = self.mt5.get_tick(self.config.symbol)
+                if not tick:
+                    logger.warning("BURST pause: missing tick during order placement")
+                    await asyncio.sleep(self._burst_check_interval_seconds)
+                    continue
+
+                entry_price = tick.ask if final_burst_signal.signal_type == "BUY" else tick.bid
+                sl_distance = abs(entry_price - final_burst_signal.stop_loss)
+                if sl_distance <= 0:
+                    logger.warning("BURST pause: invalid SL distance")
+                    await asyncio.sleep(self._burst_check_interval_seconds)
+                    continue
+
+                account_balance = self.mt5.account_balance or self.config.capital
+                risk_amount = self._burst_lot_size * sl_distance * 10
+                risk_percent = (risk_amount / account_balance) * 100 if account_balance > 0 else 0.0
+
+                burst_position = SimpleNamespace(
+                    lot_size=self._burst_lot_size,
+                    risk_amount=risk_amount,
+                    risk_percent=risk_percent,
+                )
+
+                logger.info(
+                    f"BURST CYCLE {burst_cycles_done + 1}/{max_burst_cycles}: executing {orders_this_cycle} order(s)"
+                )
+
+                for _ in range(orders_this_cycle):
+                    tick = self.mt5.get_tick(self.config.symbol)
+                    if not tick:
+                        logger.warning("BURST pause: missing tick during order placement")
+                        break
+
+                    cycle_entry = tick.ask if final_burst_signal.signal_type == "BUY" else tick.bid
+                    burst_signal = SMCSignal(
+                        signal_type=final_burst_signal.signal_type,
+                        entry_price=cycle_entry,
+                        stop_loss=final_burst_signal.stop_loss,
+                        take_profit=final_burst_signal.take_profit,
+                        confidence=final_burst_signal.confidence,
+                        reason=(
+                            f"BURST 0.01 #{burst_orders + 1}: force-fill max active"
+                            if self._burst_force_fill_max
+                            else f"BURST 0.01 #{burst_orders + 1}: approval still valid"
+                        ),
+                    )
+
+                    logger.info(
+                        f"BURST EXECUTE #{burst_orders + 1}: {burst_signal.signal_type} "
+                        f"{burst_position.lot_size:.2f} @ {burst_signal.entry_price:.2f} "
+                        f"(open={burst_open:.2f}, close={burst_close:.2f})"
+                    )
+
+                    before_trade = self._last_trade_time
+                    await self._execute_trade_safe(burst_signal, burst_position, original_regime_state)
+
+                    if self._last_trade_time != before_trade:
+                        burst_orders += 1
+                    else:
+                        logger.info("BURST pause: order was not executed")
+                        break
+
+                burst_cycles_done += 1
+
+                await asyncio.sleep(self._burst_check_interval_seconds)
+
+            logger.info(f"BURST summary: executed={burst_orders}, direction={original_signal.signal_type}")
             
         except Exception as e:
             logger.error(f"Error during 1s verification: {e}")
@@ -2552,6 +2888,28 @@ class TradingBot:
         logger.info(f"🛡️ Adjusted Broker SL to {broker_sl:.2f} to survive liquidity sweeps.")
         # --------------------------------------------------
 
+        # Final execution-time freshness check.
+        # If the latest candle has already flipped against the intended entry,
+        # skip the order instead of filling a stale signal.
+        fresh_df = self.mt5.get_market_data(
+            symbol=self.config.symbol,
+            timeframe=self.config.execution_timeframe,
+            count=5,
+        )
+        if len(fresh_df) > 0:
+            fresh_open = fresh_df["open"].tail(1).item()
+            fresh_close = fresh_df["close"].tail(1).item()
+            if signal.signal_type == "BUY" and fresh_close > fresh_open:
+                logger.warning(
+                    f"Final execution check blocked BUY: latest candle turned GREEN at send time (open={fresh_open:.2f}, close={fresh_close:.2f})."
+                )
+                return
+            if signal.signal_type == "SELL" and fresh_close < fresh_open:
+                logger.warning(
+                    f"Final execution check blocked SELL: latest candle turned RED at send time (open={fresh_open:.2f}, close={fresh_close:.2f})."
+                )
+                return
+
         logger.info(f"  Broker SL: {broker_sl:.2f} (ATR-based protection)")
 
         result = self.mt5.send_order(
@@ -2611,6 +2969,7 @@ class TradingBot:
                 entry_price=entry_price_actual,  
                 lot_size=lot_size_actual,        
                 direction=signal.signal_type,
+                take_profit=signal.take_profit,
             )
 
             regime = self._last_regime.value if hasattr(self, '_last_regime') else "unknown"
@@ -2691,6 +3050,130 @@ class TradingBot:
         else:
             logger.error(f"Order failed: {result.comment} (code: {result.retcode})")
 
+    async def _enforce_basket_profit_lock(self, open_positions) -> bool:
+        """
+        Basket-level profit lock:
+        once combined open P/L reaches trigger, do not allow it to fall below trigger.
+        Returns True if it force-closed positions and caller should stop further management.
+        """
+        try:
+            if not self._basket_profit_lock_enabled:
+                return False
+
+            if open_positions is None or len(open_positions) == 0:
+                self._basket_profit_lock_armed = False
+                self._basket_profit_peak_usd = 0.0
+                return False
+
+            total_open_profit = 0.0
+            for row in open_positions.iter_rows(named=True):
+                total_open_profit += float(row.get("profit", 0.0) or 0.0)
+
+            trigger = self._basket_profit_lock_trigger_usd
+            if not self._basket_profit_lock_armed and total_open_profit >= trigger:
+                self._basket_profit_lock_armed = True
+                self._basket_profit_peak_usd = total_open_profit
+                logger.warning(
+                    f"[BASKET LOCK ARMED] Total open P/L reached ${total_open_profit:.2f}. "
+                    f"Will defend ${trigger:.2f} floor."
+                )
+
+            if self._basket_profit_lock_armed:
+                self._basket_profit_peak_usd = max(self._basket_profit_peak_usd, total_open_profit)
+
+                if total_open_profit < trigger:
+                    logger.warning(
+                        f"[BASKET LOCK TRIGGERED] Total open P/L dropped to ${total_open_profit:.2f} "
+                        f"after peaking at ${self._basket_profit_peak_usd:.2f}. Closing all to defend ${trigger:.2f}."
+                    )
+
+                    closed = 0
+                    for row in open_positions.iter_rows(named=True):
+                        ticket = row["ticket"]
+                        profit = float(row.get("profit", 0.0) or 0.0)
+
+                        result = self.mt5.close_position(ticket)
+                        if result.success:
+                            closed += 1
+                            self.smart_risk.record_trade_result(profit)
+                            self.smart_risk.unregister_position(ticket)
+                            self._pyramid_done_tickets.discard(ticket)
+                            self._open_trade_info.pop(ticket, None)
+                            logger.info(f"[BASKET LOCK] Closed #{ticket} at ${profit:.2f}")
+                        else:
+                            logger.error(f"[BASKET LOCK] Failed to close #{ticket}: {result.comment}")
+
+                    self._basket_profit_lock_armed = False
+                    self._basket_profit_peak_usd = 0.0
+                    self._last_trade_time = datetime.now()
+                    logger.warning(f"[BASKET LOCK] Force-close complete. Closed {closed} positions.")
+                    return True
+
+            return False
+        except Exception as e:
+            logger.error(f"Basket profit lock error: {e}")
+            return False
+
+    async def _close_all_positions_sync(
+        self,
+        trigger_ticket: int,
+        trigger_reason: str,
+        current_price: float,
+        require_all_profitable: bool = False,
+    ) -> int:
+        """Close all bot-managed positions in one management pass."""
+        latest_positions = self.mt5.get_open_positions(
+            symbol=self.config.symbol,
+            magic=self.config.magic_number,
+        )
+        if latest_positions is None or len(latest_positions) == 0:
+            return 0
+
+        rows = list(latest_positions.iter_rows(named=True))
+
+        if require_all_profitable:
+            all_profitable = all((float(r.get("profit", 0.0) or 0.0) > 0.0) for r in rows)
+            if not all_profitable:
+                logger.warning(
+                    f"[SYNC EXIT] Skipped basket close from #{trigger_ticket}: "
+                    "not all open positions are profitable."
+                )
+                return 0
+
+        logger.warning(
+            f"[SYNC EXIT] Triggered by #{trigger_ticket} ({trigger_reason}). "
+            f"Closing all {len(rows)} open positions."
+        )
+
+        closed_count = 0
+        for row in rows:
+            ticket = row["ticket"]
+            profit = float(row.get("profit", 0.0) or 0.0)
+            result = self.mt5.close_position(ticket)
+
+            if result.success:
+                closed_count += 1
+                self.smart_risk.record_trade_result(profit)
+                self.smart_risk.unregister_position(ticket)
+                self._pyramid_done_tickets.discard(ticket)
+                self._open_trade_info.pop(ticket, None)
+                await self.notifications.notify_trade_close_smart(
+                    ticket,
+                    profit,
+                    current_price,
+                    f"[SYNC EXIT] {trigger_reason}",
+                )
+                logger.info(f"[SYNC EXIT] CLOSED #{ticket}: profit=${profit:.2f}")
+            else:
+                logger.error(f"[SYNC EXIT] Failed to close #{ticket}: {result.comment}")
+
+        if closed_count > 0:
+            self._forced_next_direction = None
+            self._last_trade_time = datetime.now()
+            logger.warning(f"[SYNC EXIT] Completed. Closed {closed_count}/{len(rows)} positions.")
+
+        return closed_count
+
     async def _smart_position_management(self, open_positions, df, regime_state, ml_prediction, current_price):
         try:
             fresh_mt5 = self.mt5.get_open_positions(
@@ -2706,6 +3189,9 @@ class TradingBot:
                 logger.debug(f"Cleaned stale guard #{ticket}")
         except Exception as e:
             logger.debug(f"Guard sync error: {e}")
+
+        if await self._enforce_basket_profit_lock(open_positions):
+            return
 
         if df is not None and len(df) > 0:
             pm_actions = self.position_manager.analyze_positions(
@@ -2724,6 +3210,14 @@ class TradingBot:
                         logger.debug(f"Trail SL failed #{action.ticket}: {result['message']}")
                 elif action.action == "CLOSE":
                     logger.info(f"PositionManager Close #{action.ticket}: {action.reason}")
+                    sync_closed = await self._close_all_positions_sync(
+                        trigger_ticket=action.ticket,
+                        trigger_reason=action.reason,
+                        current_price=current_price,
+                    )
+                    if sync_closed > 0:
+                        return
+
                     result = self.mt5.close_position(action.ticket)
                     if result.success:
                         profit = 0
@@ -2791,6 +3285,8 @@ class TradingBot:
                         self.smart_risk.unregister_position(action.ticket)
                         self.position_manager._peak_profits.pop(action.ticket, None)
                         self._pyramid_done_tickets.discard(action.ticket)  
+                        # Enforce cooldown from close event to avoid immediate re-entry burst.
+                        self._last_trade_time = datetime.now()
                         await self.notifications.notify_trade_close_smart(action.ticket, profit, current_price, action.reason)
                         logger.info(f"CLOSED #{action.ticket}: {action.reason}")
                         continue  
@@ -2891,25 +3387,27 @@ class TradingBot:
             if should_close:
                 logger.info(f"Smart Close #{ticket}: {reason.value if reason else 'unknown'} - {message}")
 
+                if reason and reason.value in ("take_profit", "position_limit"):
+                    sync_closed = await self._close_all_positions_sync(
+                        trigger_ticket=ticket,
+                        trigger_reason=f"{reason.value}: {message}",
+                        current_price=current_price,
+                        require_all_profitable=(reason.value == "take_profit"),
+                    )
+                    if sync_closed > 0:
+                        return
+
                 result = self.mt5.close_position(ticket)
                 if result.success:
                     logger.info(f"CLOSED #{ticket}: {message}")
 
                     risk_result = self.smart_risk.record_trade_result(profit)
-                    
-                    # ---> WIN/LOSS ALTERNATOR LOGIC <---
-                    if profit > 1.00: 
-                        self._forced_next_direction = direction 
-                        logger.warning(f"🟢 Trade WON (+${profit:.2f}). Next trade stays {self._forced_next_direction}!")
-                    elif profit > -1.50:
-                        self._forced_next_direction = direction
-                        logger.warning(f"🟡 Trade SCRATCHED/BREAKEVEN (${profit:.2f}). Ignoring noise, next trade stays {self._forced_next_direction}!")
-                    else:
-                        self._forced_next_direction = "BUY" if direction == "SELL" else "SELL"
-                        logger.warning(f"🔴 Trade LOST (${profit:.2f}). Next trade FLIPS to {self._forced_next_direction}!")
-                        
-                    self._save_forced_direction(self._forced_next_direction) 
-                    # --------------------------------------------------
+
+                    # Keep direction model-driven; disable win/loss forced-direction mutation.
+                    self._forced_next_direction = None
+
+                    # Start trade cooldown from close event too, preventing immediate re-entry churn.
+                    self._last_trade_time = datetime.now()
 
                     self.smart_risk.unregister_position(ticket)
                     self._pyramid_done_tickets.discard(ticket)  
@@ -3001,6 +3499,9 @@ class TradingBot:
                 remaining = self.mt5.get_open_positions(magic=self.config.magic_number)
                 if remaining is None or len(remaining) == 0:
                     logger.info(f"Emergency close complete: {closed_count} positions closed")
+                    if closed_count > 0:
+                        # Cooldown starts from the most recent forced close.
+                        self._last_trade_time = datetime.now()
                     break
 
                 if attempt < max_retries - 1:
@@ -3124,8 +3625,8 @@ class TradingBot:
                 struct = df_tf["market_structure"].tail(1).item()
                 
                 # FORCE ALIGNMENT FOR INVERTED TRADES
-                if getattr(self, '_always_invert', True) or self._forced_next_direction:
-                    # Bypass MTF structure blocks for counter-trend inverted trades
+                if getattr(self, '_always_invert', False):
+                    # Bypass MTF structure blocks only in explicit inverted mode
                     aligned_tfs.append(tf)
                 else:
                     # Standard logic

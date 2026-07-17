@@ -48,9 +48,10 @@ class TradingModel:
     
     def __init__(
         self,
-        confidence_threshold: float = 0.65,
+        confidence_threshold: float = 0.70,
         model_path: Optional[str] = None,
         params: Optional[Dict] = None,
+        min_margin: float = 0.15,
     ):
         """
         Initialize trading model.
@@ -64,36 +65,66 @@ class TradingModel:
             raise ImportError("xgboost is required. Install with: pip install xgboost")
         
         self.confidence_threshold = confidence_threshold
+        self.min_margin = min_margin
         self.model_path = Path(model_path) if model_path else None
         
         # Strictly Regularized XGBoost parameters - Stops Overfitting
         self.params = params or {
             "objective": "binary:logistic",
             "eval_metric": "auc",
-            "max_depth": 2,            # FIXED: Keep trees shallow to prevent curve-fitting
-            "learning_rate": 0.01,     # FIXED: Increased slightly to balance shallower trees
+            "max_depth": 4,
+            "learning_rate": 0.025,
             "tree_method": "hist",
             "device": "cpu",
-            "min_child_weight": 30,    # FIXED: Require at least 50 samples to make a rule (Kills noise)
-            "subsample": 0.5,          
-            "colsample_bytree": 0.5,   
-            "reg_alpha": 5.0,          # FIXED: Increased L1 penalty to drop useless features
-            "reg_lambda": 5.0,         # FIXED: Increased L2 penalty for smoother weights
-            "gamma": 2.0,              # FIXED: Require massive loss reduction to split
-            "scale_pos_weight": 1.0    
+            "min_child_weight": 20,
+            "subsample": 0.8,
+            "colsample_bytree": 0.8,
+            "reg_alpha": 0.6,
+            "reg_lambda": 1.0,
+            "gamma": 0.2,
+            "scale_pos_weight": 1.0,
         }
         
-        self.model: Optional[xgb.Booster] = None
+        self.model: Any = None
         self.feature_names: List[str] = []
         self.fitted = False
         self._feature_importance: Dict[str, float] = {}
         self._train_metrics: Dict[str, float] = {}
+
+    def _select_numeric_feature_columns(
+        self,
+        df: pl.DataFrame,
+        feature_cols: List[str],
+    ) -> List[str]:
+        """Return only features that can be coerced to numeric values safely."""
+        numeric_features: List[str] = []
+        for col in feature_cols:
+            if col not in df.columns:
+                continue
+
+            dtype = df.schema[col]
+            if isinstance(dtype, (pl.String, pl.Categorical)):
+                logger.warning(f"Skipping non-numeric feature column: {col}")
+                continue
+
+            try:
+                casted = df[col].cast(pl.Float64, strict=False)
+                if casted.null_count() == len(df):
+                    logger.warning(f"Skipping feature column with no numeric values: {col}")
+                    continue
+                numeric_features.append(col)
+            except Exception as exc:
+                logger.warning(f"Skipping feature column that could not be coerced: {col} ({exc})")
+                continue
+
+        return numeric_features
     
     def fit(
         self,
         df: pl.DataFrame,
         feature_cols: List[str],
         target_col: str = "target",
+        sample_weight_col: Optional[str] = None,
         train_ratio: float = 0.8,
         num_boost_round: int = 300,
         early_stopping_rounds: int = 20,
@@ -117,12 +148,22 @@ class TradingModel:
         if len(available_features) < len(feature_cols):
             missing = set(feature_cols) - set(available_features)
             logger.warning(f"Missing features (will be skipped): {missing}")
+
+        # Keep only numeric feature columns for XGBoost.
+        available_features = self._select_numeric_feature_columns(df, available_features)
+        if not available_features:
+            logger.error("No numeric feature columns available for training")
+            return self
         
         if target_col not in df.columns:
             logger.error(f"Target column '{target_col}' not found")
             return self
         
-        df_clean = df.select(available_features + [target_col]).drop_nulls()
+        train_cols = available_features + [target_col]
+        if sample_weight_col and sample_weight_col in df.columns:
+            train_cols.append(sample_weight_col)
+
+        df_clean = df.select(train_cols).drop_nulls()
         
         if len(df_clean) < 100:
             logger.warning(f"Insufficient data for training: {len(df_clean)} samples")
@@ -131,8 +172,16 @@ class TradingModel:
         self.feature_names = available_features
         
         # Extract features and target
-        X = df_clean.select(available_features).to_numpy()
+        X = np.column_stack([
+            df_clean[col].cast(pl.Float64, strict=False).to_numpy() for col in available_features
+        ])
         y = df_clean.select(target_col).to_numpy().ravel()
+        sample_weight = None
+        if sample_weight_col and sample_weight_col in df_clean.columns:
+            sample_weight = df_clean.select(sample_weight_col).to_numpy().ravel()
+            sample_weight = np.nan_to_num(sample_weight, nan=1.0, posinf=3.0, neginf=1.0)
+            sample_weight = np.clip(sample_weight, 0.5, 5.0)
+            logger.info(f"Using sample weights from '{sample_weight_col}' with range [{sample_weight.min():.2f}, {sample_weight.max():.2f}]")
         
 
         num_positive = np.sum(y == 1)
@@ -169,19 +218,32 @@ class TradingModel:
         
         logger.info(f"Training with {len(X_train)} samples, testing with {len(X_test)} samples")
         
+        has_valid_eval = len(X_test) > 0 and np.unique(y_test).size >= 2 and np.unique(y_train).size >= 2
+        if not has_valid_eval:
+            logger.warning("Skipping evaluation set because it lacks both classes or has too few rows")
+        
         # Create DMatrix
-        dtrain = xgb.DMatrix(X_train, label=y_train, feature_names=available_features)
-        dtest = xgb.DMatrix(X_test, label=y_test, feature_names=available_features)
+        if sample_weight is not None:
+            w_train = sample_weight[:split_idx]
+            if has_valid_eval:
+                w_test = sample_weight[test_start_idx:]
+            dtrain = xgb.DMatrix(X_train, label=y_train, weight=w_train, feature_names=available_features)
+            dtest = xgb.DMatrix(X_test, label=y_test, weight=w_test, feature_names=available_features) if has_valid_eval else None
+        else:
+            dtrain = xgb.DMatrix(X_train, label=y_train, feature_names=available_features)
+            dtest = xgb.DMatrix(X_test, label=y_test, feature_names=available_features) if has_valid_eval else None
         
         # Train model
-        evals = [(dtrain, "train"), (dtest, "eval")]
+        evals = [(dtrain, "train")]
+        if dtest is not None:
+            evals.append((dtest, "eval"))
         
         self.model = xgb.train(
             self.params,
             dtrain,
             num_boost_round=num_boost_round,
             evals=evals,
-            early_stopping_rounds=early_stopping_rounds,
+            early_stopping_rounds=early_stopping_rounds if has_valid_eval else None,
             verbose_eval=10,
         )
         
@@ -195,7 +257,7 @@ class TradingModel:
         
         # Calculate and log training results
         train_auc = self._evaluate(dtrain)
-        test_auc = self._evaluate(dtest)
+        test_auc = self._evaluate(dtest) if dtest is not None else float("nan")
         
         self._train_metrics = {
             "train_auc": train_auc,
@@ -213,7 +275,7 @@ class TradingModel:
         
         return self
     
-    def _evaluate(self, dmatrix: xgb.DMatrix) -> float:
+    def _evaluate(self, dmatrix: Any) -> float:
         """Evaluate model on DMatrix."""
         if self.model is None:
             return 0.0
@@ -298,11 +360,13 @@ class TradingModel:
                 feature_importance={},
             )
         
-        # Determine signal based on probability
-        if prob_up > self.confidence_threshold:
+        # Determine signal based on probability while allowing directional outputs in the
+        # 60–70% band. This keeps the model from collapsing too many valid setups into HOLD.
+        margin = abs(prob_up - prob_down)
+        if prob_up >= 0.60 and (prob_up - prob_down) >= self.min_margin:
             signal = "BUY"
             confidence = prob_up
-        elif prob_down > self.confidence_threshold:
+        elif prob_down >= 0.60 and (prob_down - prob_up) >= self.min_margin:
             signal = "SELL"
             confidence = prob_down
         else:
@@ -450,89 +514,107 @@ class TradingModel:
         """Walk-forward optimization and validation."""
         results = []
         n = len(df)
-        
+
         for start in range(0, n - train_window - test_window, step):
             train_end = start + train_window
             test_end = train_end + test_window
-            
+
             train_df = df.slice(start, train_window)
             test_df = df.slice(train_end, test_window)
-            
-            # Train on this fold
+
+            if len(train_df) < 10 or len(test_df) < 5:
+                continue
+
+            train_features = self._select_numeric_feature_columns(train_df, feature_cols)
+            test_features = self._select_numeric_feature_columns(test_df, feature_cols)
+            available_features = [col for col in train_features if col in test_features]
+
+            if not available_features:
+                continue
+
+            X_train = np.column_stack([
+                train_df[col].cast(pl.Float64, strict=False).to_numpy() for col in available_features
+            ])
+            y_train = train_df.select(target_col).to_numpy().ravel()
+            X_test = np.column_stack([
+                test_df[col].cast(pl.Float64, strict=False).to_numpy() for col in available_features
+            ])
+            y_test = test_df.select(target_col).to_numpy().ravel()
+
+            if np.unique(y_train).size < 2 or np.unique(y_test).size < 2:
+                logger.debug("Skipping walk-forward fold with insufficient class balance")
+                continue
+
+            X_train = np.nan_to_num(X_train, nan=0.0, posinf=0.0, neginf=0.0)
+            X_test = np.nan_to_num(X_test, nan=0.0, posinf=0.0, neginf=0.0)
+
             self.fit(
                 train_df,
-                feature_cols,
+                available_features,
                 target_col,
-                train_ratio=1.0,
+                train_ratio=0.8,
                 num_boost_round=50,
                 early_stopping_rounds=None,
             )
-            
+
             if not self.fitted:
                 continue
-            
-            # Evaluate
-            available_features = [f for f in feature_cols if f in train_df.columns]
-            
-            X_train = train_df.select(available_features).to_numpy()
-            y_train = train_df.select(target_col).to_numpy().ravel()
-            X_test = test_df.select(available_features).to_numpy()
-            y_test = test_df.select(target_col).to_numpy().ravel()
-            
-            X_train = np.nan_to_num(X_train, nan=0.0)
-            X_test = np.nan_to_num(X_test, nan=0.0)
-            
+
             dtrain = xgb.DMatrix(X_train, label=y_train, feature_names=available_features)
             dtest = xgb.DMatrix(X_test, label=y_test, feature_names=available_features)
-            
+
             train_auc = self._evaluate(dtrain)
             test_auc = self._evaluate(dtest)
-            
+
             results.append((train_auc, test_auc))
-        
+
         if results:
             avg_train = np.mean([r[0] for r in results])
             avg_test = np.mean([r[1] for r in results])
             logger.info(f"Walk-forward: Avg Train AUC={avg_train:.4f}, Avg Test AUC={avg_test:.4f}")
-        
+
         return results
 
 
 def get_default_feature_columns() -> List[str]:
     return [
-        # Technical indicators (STATIONARY)
-        "rsi", "atr_percent", 
-        "macd", "macd_histogram",
-        "bb_percent_b", "bb_width",
-        
-        # New distance metrics replacing raw prices
-        "ema_9_dist_pct", "ema_21_dist_pct", 
-        
-        # Returns and momentum (These are safe)
-        "returns_1", "returns_5", "returns_20", "log_returns",
-        
-        # Volatility (Safe)
-        "volatility_20", "normalized_range", 
-        
-        # SMC Normalized distances replacing raw levels
-        "fvg_top_dist_atr", "ob_top_dist_atr",
-        
-        # Boolean / Count features (Safe)
-        "higher_high", "lower_low", "hh_count_5", "ll_count_5",
-        "bos", "choch", "market_structure",
-        
-        # --- NEW: ADVANCED PATTERNS ---
-        "is_sideways", "dist_from_bottom", "dist_from_top",
-        "pattern_W_bottom", "pattern_M_top", 
-        "pattern_contraction", 
-        "pattern_bull_breakout", "pattern_bear_breakout",
-        "pattern_bull_rejection", "pattern_bear_rejection"
-
-        # --- NEW: CONTINUOUS STRUCTURAL PATTERNS ---
-        "dist_from_struct_low", "dist_from_struct_high",
-        "struct_compression_pct", "struct_position",
-        "upper_wick_ratio", "lower_wick_ratio",
-        "body_to_struct_ratio"
+        "rsi",
+        "atr_percent",
+        "macd_histogram",
+        "bb_percent_b",
+        "ema_21_dist_pct",
+        "returns_1",
+        "returns_5",
+        "returns_20",
+        "volatility_20",
+        "normalized_range",
+        "dist_from_struct_low",
+        "dist_from_struct_high",
+        "struct_compression_pct",
+        "struct_position",
+        "mtf_market_structure",
+        "mtf_ema20_distance",
+        "mtf_trend_strength",
+        "mtf_swing_proximity",
+        "mtf_fvg_active",
+        "mtf_ob_proximity",
+        "mtf_atr_ratio",
+        "mtf_rsi",
+        "fvg_gap_size_atr",
+        "fvg_age_bars",
+        "ob_width_atr",
+        "ob_distance_atr",
+        "bos_recency",
+        "confluence_score",
+        "swing_distance_atr",
+        "regime_duration_bars",
+        "regime_transition_prob",
+        "volatility_zscore",
+        "crisis_proximity",
+        "wick_ratio",
+        "body_ratio",
+        "gap_from_prev_close",
+        "consecutive_direction",
     ]
 
 

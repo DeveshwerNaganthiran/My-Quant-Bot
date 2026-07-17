@@ -110,6 +110,7 @@ class MarketRegimeDetector:
         self.last_train_idx = 0
         self.regime_mapping: Dict[int, MarketRegime] = {}
         self._train_metrics: Dict = {}
+        self.last_fit_samples: int = 0
 
     def _create_model(self, seed: int) -> GaussianHMM:
         """Create a fresh HMM with diagonal-dominant transmat init."""
@@ -117,8 +118,8 @@ class MarketRegimeDetector:
             n_components=self.n_regimes,
             covariance_type="diag",
             min_covar=self.min_covar,
-            n_iter=500,
-            tol=1e-4,
+            n_iter=80,
+            tol=1e-3,
             random_state=seed,
             verbose=False,
             init_params="smc",   # Don't random-init transmat (we set it)
@@ -224,9 +225,20 @@ class MarketRegimeDetector:
         """
         features_raw = self.prepare_features(df)
 
-        if len(features_raw) < 200:
-            logger.warning(f"Insufficient data for HMM training: {len(features_raw)} samples (need 200+)")
+        if features_raw.size == 0:
+            logger.warning("No usable HMM features available after cleaning")
             return self
+
+        sample_count = len(features_raw)
+        if sample_count < 200:
+            logger.warning(f"Insufficient data for HMM training: {sample_count} samples (need 200+)")
+            return self
+
+        max_fit_samples = min(sample_count, 20000)
+        if sample_count > max_fit_samples:
+            logger.info(f"Downsampling HMM training data from {sample_count} to {max_fit_samples} samples")
+            features_raw = features_raw[-max_fit_samples:]
+        self.last_fit_samples = len(features_raw)
 
         # Step 1: Fit scaler on raw features
         if self.scaler is not None:
@@ -235,6 +247,14 @@ class MarketRegimeDetector:
         else:
             features = features_raw
             logger.warning("No scaler available, using raw features")
+
+        if features.ndim != 2 or features.shape[1] != 8:
+            logger.warning(f"Unexpected feature matrix shape for HMM: {features.shape}")
+            return self
+
+        if not np.isfinite(features).all():
+            logger.warning("Non-finite values detected in HMM features; replacing with zeros")
+            features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
 
         # Step 2: Multi-seed fitting — pick best non-degenerate model
         best_model = None
@@ -246,7 +266,16 @@ class MarketRegimeDetector:
             seed = self.random_state + attempt * 17
             try:
                 model = self._create_model(seed)
-                model.fit(features)
+                try:
+                    model.fit(features)
+                except (Exception, KeyboardInterrupt) as fit_error:
+                    logger.debug(f"  HMM seed {seed} failed during fit: {fit_error}")
+                    continue
+
+                if not hasattr(model, "transmat_") or not np.isfinite(model.transmat_).all():
+                    logger.debug(f"  HMM seed {seed} produced invalid transition matrix")
+                    continue
+
                 score = model.score(features)
 
                 # Check state population
@@ -298,7 +327,8 @@ class MarketRegimeDetector:
                 continue
 
         if best_model is None:
-            logger.error("All HMM fitting attempts failed")
+            logger.error("All HMM fitting attempts failed; keeping detector unfitted")
+            self.fitted = False
             return self
 
         self.model = best_model

@@ -265,6 +265,10 @@ class SmartPositionManager:
     - Momentum reversal detection
     - Regime-based position adjustment
     - Smart Market Close Handler (take profit before close, hold loss if recoverable)
+
+    TP lock-in is intentionally gated by strong market context:
+    - SMC confidence must be > 70%
+    - AI confidence must be > 65%, or both inputs must be > 90%
     """
 
     def __init__(
@@ -302,6 +306,23 @@ class SmartPositionManager:
         # Track peak profit per position
         self._peak_profits: Dict[int, float] = {}
         self._entry_times: Dict[int, datetime] = {}
+
+    def _should_trigger_tp_lock_in(self, smc_confidence: float, ai_confidence: float) -> bool:
+        """Return True only when the signal context is strong enough for TP lock-in."""
+        def _normalize(value: float) -> float:
+            if value is None:
+                return 0.0
+            if value > 1.0:
+                return value / 100.0
+            return float(value)
+
+        smc_score = _normalize(smc_confidence)
+        ai_score = _normalize(ai_confidence)
+
+        if smc_score > 0.70 and ai_score > 0.65:
+            return True
+
+        return smc_score > 0.90 and ai_score > 0.90
 
     def analyze_positions(
         self,
@@ -370,6 +391,7 @@ class SmartPositionManager:
             "regime": "medium_volatility",
             "ml_signal": "HOLD",
             "ml_confidence": 0.5,
+            "smc_confidence": 0.0,
             "should_exit_longs": False,
             "should_exit_shorts": False,
             "urgency": 0,  # 0-10 scale
@@ -418,6 +440,12 @@ class SmartPositionManager:
                 elif ml_prediction.signal == "BUY":
                     analysis["should_exit_shorts"] = True
                     analysis["urgency"] += 2
+
+        # SMC confidence from the latest market frame
+        if "smc_confidence" in df.columns:
+            smc_conf = df["smc_confidence"].tail(1).item()
+            if smc_conf is not None:
+                analysis["smc_confidence"] = float(smc_conf)
 
         # RSI analysis (if available)
         if "rsi" in df.columns:
@@ -556,7 +584,11 @@ class SmartPositionManager:
         if current_tp > 0 and entry_price > 0:
             tp_distance_price = abs(current_tp - entry_price)
             current_profit_price = (current_price - entry_price) if is_buy else (entry_price - current_price)
-            
+
+            smc_confidence = market.get("smc_confidence", 0.0)
+            ai_confidence = market.get("ml_confidence", 0.0)
+            strong_context = self._should_trigger_tp_lock_in(smc_confidence, ai_confidence)
+
             if tp_distance_price > 0:
                 progress_pct = current_profit_price / tp_distance_price
                 lock_in_pct = 0.0
@@ -589,36 +621,33 @@ class SmartPositionManager:
                     tier_name = "45%"
                 elif progress_pct >= 0.40:
                     lock_in_pct = 0.35  # Lock 15% of TP, give 25% breathing room
-                    tier_name = "40%"
+                    tier_name = "40%"   
                 elif progress_pct >= 0.35:
-                    lock_in_pct = 0.30  # Pure Breakeven + spread fees (2% of TP)
+                    lock_in_pct = 0.30  # Lock 30% of TP to secure early profit
                     tier_name = "35%"
-                elif progress_pct >= 0.30:
-                    lock_in_pct = 0.24  # Pure Breakeven + spread fees (2% of TP)
-                    tier_name = "30%"
-                elif progress_pct >= 0.25:
-                    lock_in_pct = 0.21  # Pure Breakeven + spread fees (2% of TP)
-                    tier_name = "25%"
-                elif progress_pct >= 0.20:
-                    lock_in_pct = 0.15  # Pure Breakeven + spread fees (2% of TP)
-                    tier_name = "20%"
-                elif progress_pct >= 0.15:
-                    lock_in_pct = 0.12  # Pure Breakeven + spread fees (2% of TP)
-                    tier_name = "15%"
+                # elif progress_pct >= 0.30:
+                #     lock_in_pct = 0.24  # Lock 24% of TP for steady protection
+                #     tier_name = "30%"
+                # elif progress_pct >= 0.25:
+                #     lock_in_pct = 0.21  # Lock 21% of TP at a more conservative stage
+                #     tier_name = "25%"
+                # elif progress_pct >= 0.20:
+                #     lock_in_pct = 0.15  # Lock 15% of TP once the move is mature
+                #     tier_name = "20%"
+                # elif progress_pct >= 0.15:
+                #     lock_in_pct = 0.12  # Light lock-in for early progress
+                #     tier_name = "15%"
                 # elif progress_pct >= 0.10:
-                #     lock_in_pct = 0.06  # Pure Breakeven + spread fees (2% of TP)
+                #     lock_in_pct = 0.06  # Minimal lock-in to avoid over-tightening
                 #     tier_name = "10%"
-                # elif progress_pct >= 0.5:
-                #     lock_in_pct = 0.02  # Pure Breakeven + spread fees (2% of TP)
+                # elif progress_pct >= 0.05:
+                #     lock_in_pct = 0.02  # Tiny early protection
                 #     tier_name = "5%"
-                # elif progress_pct >= 0.1:
-                #     lock_in_pct = 0.06  # Pure Breakeven + spread fees (2% of TP)
-                #     tier_name = "1%"
 
-                if lock_in_pct > 0.0:
+                if strong_context and lock_in_pct > 0.0:
                     lock_distance = lock_in_pct * tp_distance_price
                     new_be_sl = entry_price + lock_distance if is_buy else entry_price - lock_distance
-                    
+
                     # Only move if the new SL is tighter (more profitable) than current SL
                     if current_sl == 0 or (is_buy and new_be_sl > current_sl) or (not is_buy and new_be_sl < current_sl):
                         return PositionAction(

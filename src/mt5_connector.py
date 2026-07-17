@@ -475,7 +475,15 @@ class MT5Connector:
             pl.col("tick_volume").cast(pl.Int64).alias("volume"),
         ]).drop("tick_volume")
         
-        logger.debug(f"Fetched {len(df)} bars for {symbol} {timeframe}")
+        if len(df) < 0:
+            logger.warning(f"Fetched {len(df)} bars for {symbol} {timeframe}")
+        else:
+            logger.debug(f"Fetched {len(df)} bars for {symbol} {timeframe}")
+
+        if len(df) < count:
+            logger.warning(
+                f"MT5 history limit reached for {symbol} {timeframe}: requested {count} bars but received {len(df)}"
+            )
         return df
     
     def get_multi_timeframe_data(

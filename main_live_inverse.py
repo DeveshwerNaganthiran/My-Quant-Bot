@@ -55,7 +55,7 @@ from src.smc_polars import SMCAnalyzer, SMCSignal
 from src.feature_eng import FeatureEngineer
 from src.regime_detector import MarketRegimeDetector, FlashCrashDetector, MarketRegime, RegimeState
 from src.risk_engine import RiskEngine
-from backtests.ml_v2.ml_v2_model import TradingModelV2
+from src.ml_model import TradingModel
 from backtests.ml_v2.ml_v2_feature_eng import MLV2FeatureEngineer
 from src.ml_model import get_default_feature_columns
 from src.position_manager import SmartPositionManager
@@ -114,8 +114,8 @@ class TradingBot:
         self.risk_engine = RiskEngine(self.config)
         self.filter_config = FilterConfigManager("data/filter_config.json")
 
-        self.ml_model = TradingModelV2(
-            confidence_threshold=0.60,
+        self.ml_model = TradingModel(
+            confidence_threshold=0.55,
             model_path="models/xgboost_model.pkl",
         )
         self.fe_v2 = MLV2FeatureEngineer()
@@ -340,18 +340,15 @@ class TradingBot:
         
         try:
             self.ml_model.load()
-            from backtests.ml_v2.ml_v2_model import ModelType
-            self.ml_model.model_type = ModelType.XGBOOST_BINARY
-            
+
             if self.ml_model.fitted:
-                logger.info("ML V2 Model D loaded successfully")
+                logger.info("Production XGBoost Model loaded successfully")
                 logger.info(f"  Features: {len(self.ml_model.feature_names)}")
-                logger.info(f"  Type: {self.ml_model.model_type.value}")
             else:
-                logger.warning("ML V2 Model D not found or not fitted")
+                logger.warning("Production XGBoost Model not found or not fitted")
                 models_ok = False
         except Exception as e:
-            logger.error(f"Failed to load ML V2 Model D: {e}")
+            logger.error(f"Failed to load Production XGBoost Model: {e}")
             models_ok = False
         
         self._models_loaded = models_ok
@@ -2079,7 +2076,7 @@ class TradingBot:
         if smc_signal is not None:
             smc_conf = smc_signal.confidence
 
-            if smc_conf < 0.55:
+            if smc_conf < 0.70:
                 if self._loop_count % 120 == 0:
                     logger.info(f"[SMC LOW] {smc_signal.signal_type} confidence {smc_conf:.0%} < 55% -> Skip")
                 return None
@@ -2089,9 +2086,14 @@ class TradingBot:
             ai_signal = ml_prediction.signal
             
             # --- STRICT ALIGNMENT BLOCK: AI IS THE MASTER ---
-            if ai_conf >= 0.515 and ai_signal != smc_signal.signal_type:
+            if ai_signal not in ["BUY", "SELL"]:
+                logger.warning(f"🚫 AI HOLD/UNKNOWN: SMC wants {smc_signal.signal_type}, but AI is {ai_signal}. Trade skipped.")
+                return None
+
+            if ai_signal != smc_signal.signal_type:
                 logger.warning(f"🚫 AI VETO: SMC wants to {smc_signal.signal_type}, but AI macro-trend is {ai_signal} ({ai_conf:.0%}). Trade cancelled to prevent trap.")
                 return None
+
                 
             # --- CONFLUENCE LOGIC ---
             if ai_conf >= 0.515 and smc_signal.signal_type == ai_signal:
